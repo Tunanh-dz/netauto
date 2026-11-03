@@ -10,5 +10,6 @@ case "${1:-}" in
           sudo containerlab deploy -t "$TOPO"
           bash lab/setup.sh ;;
   config) bash lab/setup.sh ;;
-  *)      echo "Dùng: bash scripts/lab.sh {up|down|reset|config}" ;;
+  verify) bash scripts/verify.sh ;;
+  *)      echo "Dùng: bash scripts/lab.sh {up|down|reset|config|verify}" ;;
 esac
