@@ -41,3 +41,14 @@ Bước 3.4, check từ bên ngoài (vscode)
     dxq sw1 bridge vlan show
     dxq sw2 bridge vlan show
     dxq sw1 ip -br link show master br0
+Thí nghiệm 1 ( mất subinterface VLan trên router)- xóa eth1.10 trên r1
+
+### Thí nghiệm 1: xóa eth1.10 trên r1
+| Mục | Nội dung |
+|---|---|
+| Dự đoán | h-sales không ping được gateway, |
+| Lệnh gây lỗi | dxq r1 ip link del eth1.10 |
+| Quan sát thực tế | (dán output chính) |
+| Giải thích | ... |
+| Cách khôi phục | bash scripts/lab.sh config |
+| Đúng / sai so với dự đoán | ... |
