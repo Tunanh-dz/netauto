@@ -1,9 +1,10 @@
-"""Giao diện dòng lệnh: python3 -m netauto.cli collect"""
+"""Giao diện dòng lệnh: python3 -m netauto.cli {collect|diff}"""
 import argparse
 import json
 from dataclasses import asdict
 
 from netauto.collector import collect_all, save_snapshot
+from netauto.diff import diff_snapshots, load_snapshot
 
 
 def print_summary(snapshot):
@@ -18,14 +19,31 @@ def print_summary(snapshot):
             print(f"    ! {err}")
 
 
+def print_diff(diff):
+    if not diff:
+        print("Không có thay đổi giữa hai snapshot.")
+        return
+    for node, change in diff.items():
+        print(f"[{node}]")
+        for fact in change["mất"]:
+            print(f"  - {fact}")
+        for fact in change["mới"]:
+            print(f"  + {fact}")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="netauto")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
     c = sub.add_parser("collect", help="thu thập trạng thái cả mạng")
     c.add_argument("--save", action="store_true", help="lưu snapshot ra file JSON")
     c.add_argument("--json", action="store_true", help="in toàn bộ dữ liệu JSON")
-    args = parser.parse_args()
 
+    d = sub.add_parser("diff", help="so sánh hai file snapshot")
+    d.add_argument("old", help="snapshot cũ")
+    d.add_argument("new", help="snapshot mới")
+
+    args = parser.parse_args()
     if args.cmd == "collect":
         snapshot = collect_all()
         if args.json:
@@ -34,6 +52,8 @@ def main():
             print_summary(snapshot)
         if args.save:
             print("\nĐã lưu:", save_snapshot(snapshot))
+    elif args.cmd == "diff":
+        print_diff(diff_snapshots(load_snapshot(args.old), load_snapshot(args.new)))
 
 
 if __name__ == "__main__":
