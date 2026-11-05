@@ -30,3 +30,10 @@ hosts:
   h-guest: {vlan: 30, ip: 192.168.30.10/24}
   h-eng:   {vlan: 20, ip: 192.168.20.10/24}
   h-mgmt:  {vlan: 99, ip: 192.168.99.10/24}
+
+
+probes:
+  - {src: h-sales, dst: h-eng}     # đi qua liên kết r1-r2 (OSPF)
+  - {src: h-guest, dst: h-mgmt}    # đi qua liên kết r1-r2 (OSPF)
+  - {src: h-sales, dst: h-guest}   # cùng r1, định tuyến giữa VLAN
+  - {src: h-eng,   dst: h-mgmt}    # cùng r2, định tuyến giữa VLAN
