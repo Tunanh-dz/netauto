@@ -2,7 +2,7 @@
 import time
 from dataclasses import asdict
 
-from netauto import db, health, incidents, probe
+from netauto import db, health, incidents, perf, probe
 from netauto.check import check_snapshot
 from netauto.collector import collect_all
 from netauto.diff import diff_snapshots
@@ -23,6 +23,7 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
     carried = incidents.open_incidents(conn)
     if carried:
         print(f"(còn {len(carried)} sự cố mở từ lần chạy trước)")
+    history = {}                             # lịch sử trạng thái từng luồng ping
     done = 0
     try:
         while True:
@@ -37,13 +38,18 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
                 db.save_events(conn, sid, at, node, change)
             n_changes = sum(len(c["mất"]) + len(c["mới"]) for c in changes.values())
 
-            findings = check_snapshot(data, intent)
-            opened, closed = incidents.record(conn, findings, at, sid)
-            n_open = len(incidents.open_incidents(conn))
-
+            config_findings = check_snapshot(data, intent)
             results = probe.run_probes(intent)
             probe.save_probes(conn, sid, at, results)
-            h = health.score(findings, results)
+            perf.push(history, results)
+            perf_found = perf.perf_findings(results, history)
+
+            opened, closed = incidents.record(
+                conn, config_findings + perf_found, at, sid)
+            n_open = len(incidents.open_incidents(conn))
+
+            # điểm sức khỏe chỉ dùng lỗi cấu hình, vì luồng ping đã được tính riêng
+            h = health.score(config_findings, results)
             health.save_health(conn, sid, at, h)
 
             print(f"[{at}] snapshot #{sid}: reachable {reach}/{len(data['devices'])}, "
