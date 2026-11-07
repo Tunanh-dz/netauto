@@ -82,6 +82,13 @@ class TestApplyNode(unittest.TestCase):
         out = apply_node("r1", items, fake_run([(True, "% Unknown command: bad\n", "")]))
         self.assertEqual(out[0].status, "failed")
 
+    def test_vtysh_missing_conf_warning_is_not_failure(self):
+        items = [item("unknown", kind="ospf", command="router ospf", channel="vtysh")]
+        warn = "% Can't open configuration file /etc/frr/vtysh.conf due to 'No such file or directory'.\n"
+        self.assertEqual(apply_node("r1", items, fake_run([(True, warn, "")]))[0].status, "done")
+        both = warn + "% Unknown command: x\n"
+        out = apply_node("r1", items, fake_run([(True, both, "")]))
+        self.assertEqual((out[0].status, out[0].detail), ("failed", "% Unknown command: x"))
 
 if __name__ == "__main__":
     unittest.main()
