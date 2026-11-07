@@ -85,3 +85,47 @@ def parse_ospf_neighbors(text: str) -> list[OspfNeighbor]:
                 interface=e.get("ifaceName") or e.get("interface"),
             ))
     return result
+
+
+
+import re as _re
+
+
+def _norm_area(area: str) -> str:
+    return "0" if area in ("0", "0.0.0.0") else area
+
+
+def parse_ospf_facts(text: str) -> list[str]:
+    """Đọc `show running-config` của FRR, trả về các sự kiện cấu hình OSPF đã chuẩn hóa.
+
+    Ví dụ: 'router-id 1.1.1.1', 'network 10.0.12.0/30 area 0', 'eth1.10: ip ospf passive'.
+    """
+    facts, block = [], None
+    for raw in text.splitlines():
+        s = raw.strip()
+        if not s or s == "!":
+            block = None
+            continue
+        if not raw[0].isspace():                       # dòng ở cấp cao nhất: mở hoặc đóng khối
+            if s == "router ospf":
+                block = "router"
+            elif s.startswith("interface "):
+                block = ("iface", s.split()[1])
+            else:
+                block = None
+            continue
+        if block == "router":
+            m = _re.match(r"ospf router-id (\S+)$", s)
+            if m:
+                facts.append(f"router-id {m.group(1)}")
+                continue
+            m = _re.match(r"network (\S+) area (\S+)$", s)
+            if m:
+                facts.append(f"network {m.group(1)} area {_norm_area(m.group(2))}")
+        elif isinstance(block, tuple) and s.startswith("ip ospf "):
+            facts.append(f"{block[1]}: {s}")
+    return facts
+
+
+def parse_ip_forward(text: str) -> int:
+    return int(text.strip())

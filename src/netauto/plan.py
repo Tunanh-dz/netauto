@@ -6,6 +6,7 @@ Mã thoát: 0 = không cần thay đổi, 2 = có thay đổi cần áp dụng
 import argparse
 import ipaddress
 import json
+import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -35,12 +36,29 @@ def _ports(device: dict) -> dict:
     return {p["port"]: {v["vid"]: v for v in p["vlans"]} for p in device["vlans"]}
 
 
+def fact_of(step) -> Optional[str]:
+    """Chuẩn hóa một dòng vtysh thành 'sự kiện' để so với ospf_facts; None nếu là dòng cấu trúc."""
+    text = step.command.strip()
+    m = re.match(r"ospf router-id (\S+)$", text)
+    if m:
+        return f"router-id {m.group(1)}"
+    m = re.match(r"network (\S+) area (\S+)$", text)
+    if m:
+        return f"network {m.group(1)} area {m.group(2)}"
+    if text.startswith("ip ospf "):
+        return f"{step.target}: {text}"
+    return None
+
+
 def satisfied(step, device: dict) -> Optional[bool]:
     """True = đã đúng, False = chưa đúng, None = snapshot không đủ thông tin."""
     ifaces, ports = _ifaces(device), _ports(device)
     kind, target = step.kind, step.target
-    if step.channel == "vtysh" or kind == "sysctl":
+    if step.channel == "vtysh":
         return None
+    if kind == "sysctl":
+        value = device.get("ip_forward")
+        return None if value is None else value == 1
     if kind == "bridge":
         return "br0" in ifaces
     if kind == "bridge-up":
@@ -84,6 +102,20 @@ def classify(step, device: dict) -> PlanItem:
     return PlanItem(action=action, **base)
 
 
+def _ospf_item(node: str, steps: list, device: dict) -> PlanItem:
+    """Gom mọi dòng vtysh của một router thành MỘT mục: dòng lẻ không chạy được ngoài khối."""
+    joined = "; ".join(s.command.strip() for s in steps)
+    facts = device.get("ospf_facts")
+    if facts is None:
+        return PlanItem(node, "unknown", "ospf", "config", joined, "vtysh",
+                        "snapshot chưa đọc được cấu hình OSPF")
+    missing = [f for f in (fact_of(s) for s in steps) if f and f not in facts]
+    if not missing:
+        return PlanItem(node, "ok", "ospf", "config", joined, "vtysh")
+    return PlanItem(node, "add", "ospf", "config", joined, "vtysh",
+                    "thiếu: " + ", ".join(missing))
+
+
 def _extra_addresses(node: str, ifaces: dict, want: dict) -> list[PlanItem]:
     out = []
     for name, wanted in want.items():
@@ -95,7 +127,27 @@ def _extra_addresses(node: str, ifaces: dict, want: dict) -> list[PlanItem]:
     return out
 
 
-def extras(node: str, device: dict, intent: dict) -> list[PlanItem]:
+def _extra_ospf(node: str, device: dict, vtysh_steps: list) -> list[PlanItem]:
+    """Cấu hình OSPF ĐANG CÓ mà intent không muốn. Không đụng router-id (đã có bước 'add')."""
+    facts = device.get("ospf_facts")
+    if facts is None:
+        return []
+    wanted = {fact_of(s) for s in vtysh_steps} - {None}
+    out = []
+    for f in facts:
+        if f in wanted or f.startswith("router-id"):
+            continue
+        if f.startswith("network "):
+            command = f"router ospf; no {f}; exit"
+        else:
+            iface, _, line = f.partition(": ")
+            command = f"interface {iface}; no {line}; exit"
+        out.append(PlanItem(node, "remove", "ospf-extra", f, command, "vtysh",
+                            "cấu hình OSPF không có trong intent"))
+    return out
+
+
+def extras(node: str, device: dict, intent: dict, vtysh_steps=()) -> list[PlanItem]:
     """Những thứ ĐANG CÓ trên thiết bị mà intent không muốn (cần gỡ)."""
     ifaces, ports = _ifaces(device), _ports(device)
     out = []
@@ -124,6 +176,7 @@ def extras(node: str, device: dict, intent: dict) -> list[PlanItem]:
                                     f"ip link del {name}",
                                     reason="subinterface không có trong intent"))
         out += _extra_addresses(node, ifaces, want)
+        out += _extra_ospf(node, device, list(vtysh_steps))
     elif node in intent["hosts"]:
         out += _extra_addresses(node, ifaces, {"eth1": {intent["hosts"][node]["ip"]}})
     return out
@@ -141,8 +194,12 @@ def build_plan(intent: dict, snapshot: dict, nodes: Optional[set] = None) -> lis
             items.append(PlanItem(node, "blocked", "device", node, "",
                                   reason="thiết bị không truy cập được"))
             continue
-        items += [classify(step, device) for step in steps]
-        items += extras(node, device, intent)
+        shell = [s for s in steps if s.channel != "vtysh"]
+        vtysh = [s for s in steps if s.channel == "vtysh"]
+        items += [classify(s, device) for s in shell]
+        if vtysh:
+            items.append(_ospf_item(node, vtysh, device))
+        items += extras(node, device, intent, vtysh)
     return items
 
 
@@ -164,8 +221,11 @@ def print_plan(items: list[PlanItem], verbose: bool = False) -> None:
         print(f"== {node}: {len(ok)} đã đúng, {len(todo)} cần thay đổi, "
               f"{len(unknown)} chưa kiểm chứng")
         for i in todo:
-            detail = i.command or i.reason
-            note = f"   # {i.reason}" if i.command and i.reason else ""
+            if i.kind == "ospf":
+                detail, note = "gửi lại cấu hình OSPF", f"   # {i.reason}"
+            else:
+                detail = i.command or i.reason
+                note = f"   # {i.reason}" if i.command and i.reason else ""
             print(f"  {LABEL[i.action]:<5} {i.kind:<16} {i.target:<20} {detail}{note}")
         if unknown:
             kinds = ", ".join(sorted({i.kind for i in unknown}))
@@ -173,7 +233,7 @@ def print_plan(items: list[PlanItem], verbose: bool = False) -> None:
                   f"sẽ áp lại khi apply")
         if verbose:
             for i in ok:
-                print(f"  ok    {i.kind:<16} {i.target:<20} {i.command}")
+                print(f"  ok    {i.kind:<16} {i.target:<20} {i.command[:60]}")
 
     n_add = sum(1 for i in items if i.action == "add")
     n_rm = sum(1 for i in items if i.action == "remove")

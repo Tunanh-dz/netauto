@@ -68,7 +68,7 @@ class TestPlan(unittest.TestCase):
         items = plan("r1", r1())
         self.assertEqual({i.action for i in items}, {"ok", "unknown"})
         self.assertEqual({i.kind for i in items if i.action == "unknown"},
-                         {"sysctl", "ospf", "ospf-iface"})
+                         {"sysctl", "ospf"})
 
     def test_missing_subinterface_is_added(self):
         self.assertEqual(changes(plan("r1", r1(drop="eth1.10"))), {

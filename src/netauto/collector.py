@@ -6,8 +6,8 @@ from pathlib import Path
 
 from netauto.inventory import INVENTORY
 from netauto.models import DeviceState, Snapshot
-from netauto.parsers import (parse_interfaces, parse_ospf_neighbors,
-                             parse_routes, parse_vlans)
+from netauto.parsers import (parse_interfaces, parse_ip_forward, parse_ospf_facts,
+                             parse_ospf_neighbors, parse_routes, parse_vlans)
 from netauto.transport import run
 
 
@@ -56,6 +56,15 @@ def collect_device(node: str, role: str) -> DeviceState:
         if nbrs is not None:
             state.ospf_neighbors = nbrs
 
+        facts = _collect(state, "ospf-config", ["vtysh", "-c", "show running-config"],
+                         parse_ospf_facts)
+        if facts is not None:
+            state.ospf_facts = facts
+
+        forward = _collect(state, "ip_forward", ["sysctl", "-n", "net.ipv4.ip_forward"],
+                           parse_ip_forward)
+        if forward is not None:
+            state.ip_forward = forward
     return state
 
 

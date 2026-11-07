@@ -19,7 +19,7 @@ from netauto.plan import build_plan, print_plan
 from netauto.probe import run_probes
 from netauto.rollback import flows_up, rollback, wait_for_flows
 
-PRUNE_KINDS = {"vlan-extra", "subif-extra", "addr-extra"}   # chỉ gỡ khi có --prune
+PRUNE_KINDS = {"vlan-extra", "subif-extra", "addr-extra", "ospf-extra"}   # chỉ gỡ khi có --prune
 EXISTS_MARKERS = ("File exists", "already exists")          # "đã có rồi" coi như thành công
 VTYSH_BENIGN = ("% Can't open configuration file",)         # cảnh báo vô hại khi thiếu vtysh.conf
 TAG = {"add": "THÊM", "remove": "GỠ", "unknown": "ÁP LẠI"}
@@ -71,7 +71,8 @@ def to_units(items):
 
 def label_of(channel, group):
     if channel == "vtysh":
-        return f"vtysh ({len(group)} dòng)"
+        lines = sum(len(i.command.split(";")) for i in group)
+        return f"vtysh ({lines} dòng)"
     return f"{group[0].kind} {group[0].target}"
 
 
@@ -80,7 +81,8 @@ def run_unit(node, channel, group, run=transport.run):
     if channel == "vtysh":
         argv = ["vtysh", "-c", "configure terminal"]
         for i in group:
-            argv += ["-c", i.command.strip()]
+            for part in i.command.split(";"):
+                argv += ["-c", part.strip()]
     else:
         argv = shlex.split(group[0].command)
     try:
@@ -116,14 +118,12 @@ def show_preview(groups):
         print(f"== {node}")
         for channel, group in to_units(items):
             if channel == "vtysh":
-                text = "cấu hình OSPF, gửi lại (snapshot chưa đọc được)"
-                tag = TAG["unknown"]
-            else:
-                i = group[0]
-                tag = TAG[i.action]
-                text = i.command
-            print(f"  {tag:<7} {label_of(channel, group):<24} {text}")
-
+                for i in group:
+                    name = (i.kind + " " + i.target)[:23]
+                    print(f"  {TAG[i.action]:<7} {name:<24} {i.reason or i.command}")
+                continue
+            i = group[0]
+            print(f"  {TAG[i.action]:<7} {label_of(channel, group):<24} {i.command}")
 
 def do_rollback(executed, snapshot):
     before = {d["node"]: d for d in snapshot["devices"]}

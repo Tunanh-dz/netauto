@@ -89,6 +89,13 @@ class TestApplyNode(unittest.TestCase):
         both = warn + "% Unknown command: x\n"
         out = apply_node("r1", items, fake_run([(True, both, "")]))
         self.assertEqual((out[0].status, out[0].detail), ("failed", "% Unknown command: x"))
-
+        
+    def test_vtysh_semicolon_command_is_split_into_lines(self):
+        items = [item("remove", kind="ospf-extra", channel="vtysh",
+                      command="router ospf; no network 1.1.1.0/24 area 0; exit")]
+        run = fake_run([OK])
+        apply_node("r1", items, run)
+        self.assertEqual(run.calls[0][1], ["vtysh", "-c", "configure terminal", "-c", "router ospf",
+                                           "-c", "no network 1.1.1.0/24 area 0", "-c", "exit"])
 if __name__ == "__main__":
     unittest.main()

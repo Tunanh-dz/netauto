@@ -53,7 +53,8 @@ class DeviceState:
     vlans: list[VlanPort] = field(default_factory=list)
     ospf_neighbors: list[OspfNeighbor] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-
+    ospf_facts: list[str] | None = None   # None = chưa đọc được; [] = đã đọc, không có cấu hình OSPF
+    ip_forward: int | None = None         # giá trị sysctl net.ipv4.ip_forward (chỉ router)
 
 @dataclass
 class Snapshot:
