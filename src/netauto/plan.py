@@ -15,7 +15,7 @@ from typing import Optional
 from netauto.collector import collect_all
 from netauto.intent import INTENT_PATH, load_intent
 from netauto.render import render
-
+from netauto.inventory import inventory_from_intent
 
 @dataclass(frozen=True)
 class PlanItem:
@@ -243,8 +243,9 @@ def print_plan(items: list[PlanItem], verbose: bool = False) -> None:
     else:
         print(f"\nKẾT LUẬN: cần thay đổi: {n_add} thêm, {n_rm} gỡ, {n_block} bị chặn.")
         if n_block:
-            print("Có mục bị CHẶN: lỗi hạ tầng (thiếu cổng hoặc thiết bị không truy cập "
-                  "được). Cần dựng lại lab (lab.sh reset) trước.")
+            print("Có mục bị CHẶN: lỗi hạ tầng (thiếu cổng, thiết bị không truy cập được, "
+                  "hoặc thiết bị mới chưa có trong lab/topology.clab.yml). Dựng lại lab "
+                  "(lab.sh reset) chỉ giúp nếu thiết bị đã khai báo trong topology.")
 
 
 def main():
@@ -262,7 +263,7 @@ def main():
     if args.snapshot:
         snapshot = json.loads(Path(args.snapshot).read_text(encoding="utf-8"))
     else:
-        snapshot = asdict(collect_all())
+        snapshot = asdict(collect_all(inventory_from_intent(intent)))
 
     items = build_plan(intent, snapshot, {args.node} if args.node else None)
     print_plan(items, args.verbose)

@@ -10,3 +10,12 @@ INVENTORY = {
     "h-eng": "host",
     "h-mgmt": "host",
 }
+
+
+def inventory_from_intent(intent: dict) -> dict:
+    """Danh sách thiết bị và vai trò, suy ra từ intent (nguồn duy nhất)."""
+    nodes = {}
+    for role, section in (("router", "routers"), ("switch", "switches"), ("host", "hosts")):
+        for name in intent[section]:
+            nodes[name] = role
+    return nodes

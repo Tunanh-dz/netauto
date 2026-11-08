@@ -3,8 +3,9 @@ import json
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-
-from netauto.inventory import INVENTORY
+from concurrent.futures import ThreadPoolExecutor
+from netauto.intent import load_intent
+from netauto.inventory import inventory_from_intent
 from netauto.models import DeviceState, Snapshot
 from netauto.parsers import (parse_interfaces, parse_ip_forward, parse_ospf_facts,
                              parse_ospf_neighbors, parse_routes, parse_vlans)
@@ -68,10 +69,15 @@ def collect_device(node: str, role: str) -> DeviceState:
     return state
 
 
-def collect_all(inventory: dict = INVENTORY) -> Snapshot:
+def collect_all(inventory: dict | None = None, workers: int = 8) -> Snapshot:
+    """Thu thập mọi thiết bị song song. Mặc định lấy danh sách thiết bị từ intent."""
+    if inventory is None:
+        inventory = inventory_from_intent(load_intent())
     snapshot = Snapshot(taken_at=_now())
-    for node, role in inventory.items():
-        snapshot.devices.append(collect_device(node, role))
+    if inventory:
+        with ThreadPoolExecutor(max_workers=max(1, min(workers, len(inventory)))) as pool:
+            snapshot.devices = list(pool.map(lambda item: collect_device(*item),
+                                             inventory.items()))
     return snapshot
 
 
