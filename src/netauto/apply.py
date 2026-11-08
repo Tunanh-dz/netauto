@@ -12,7 +12,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass
 
-from netauto import transport
+from netauto import transport, audit
 from netauto.collector import collect_all
 from netauto.intent import INTENT_PATH, load_intent
 from netauto.plan import build_plan, print_plan
@@ -135,8 +135,8 @@ def do_rollback(executed, snapshot):
     if cannot:
         kinds = ", ".join(sorted({i.kind for i in cannot}))
         print(f"  (chưa hoàn tác được {len(cannot)} dòng gửi lại: {kinds}; chưa lưu trạng thái trước)")
-
-
+        return [{"node": u.node, "command": u.command, "ok": u.ok} for u in undone]
+ 
 def main():
     ap = argparse.ArgumentParser(prog="netauto.apply")
     ap.add_argument("--intent", default=INTENT_PATH)
@@ -147,7 +147,9 @@ def main():
                     help="giữ nguyên thay đổi dù có lỗi hoặc mạng xấu đi")
     ap.add_argument("--verify-timeout", type=int, default=30,
                     help="số giây chờ mạng hội tụ khi kiểm chứng (mặc định 30)")
+    ap.add_argument("--audit-db", default=audit.DB_PATH, help="file SQLite chứa nhật ký kiểm toán")
     args = ap.parse_args()
+    started = time.monotonic()
 
     intent = load_intent(args.intent)
     known = [*intent["switches"], *intent["routers"], *intent["hosts"]]
@@ -155,13 +157,36 @@ def main():
         sys.exit(f"Không có thiết bị '{args.node}'. Có: {', '.join(known)}")
     nodes = {args.node} if args.node else None
 
+    # Fail-closed: không ghi được nhật ký thì không được thay đổi mạng.
+    conn = None
+    if args.yes:
+        try:
+            conn = audit.connect(args.audit_db)
+        except Exception as exc:
+            print(f"TỪ CHỐI áp dụng: không mở được nhật ký kiểm toán ({exc}). Chưa thay đổi gì.")
+            sys.exit(5)
+
+    log = {"steps": [], "undo": [], "regressions": []}
+
+    def finish(code, result):
+        """Ghi một bản ghi kiểm toán (chỉ khi có --yes) rồi thoát."""
+        if conn is not None:
+            entry = audit.new_entry(args.intent, nodes, args.prune, result, code,
+                                    time.monotonic() - started, log)
+            try:
+                print(f"Nhật ký kiểm toán: #{audit.record(conn, entry)} ({result})")
+            except Exception as exc:
+                print(f"CẢNH BÁO: không ghi được nhật ký kiểm toán: {exc}")
+        sys.exit(code)
+
     snapshot = asdict(collect_all())
     items = build_plan(intent, snapshot, nodes)
     if any(i.action == "blocked" for i in items):
         print_plan(items)
         print("\nTỪ CHỐI áp dụng: kế hoạch có mục CHẶN (lỗi hạ tầng). "
               "Sửa hạ tầng (vd. bash scripts/lab.sh reset) rồi chạy lại.")
-        sys.exit(3)
+        log["reason"] = "kế hoạch có mục CHẶN (lỗi hạ tầng)"
+        finish(3, "TỪ CHỐI")
 
     chosen = select_items(items, args.prune)
     skipped = [i for i in items if i.action == "remove" and i not in chosen]
@@ -186,7 +211,8 @@ def main():
     print("\n--- ĐO TRƯỚC KHI ÁP DỤNG ---")
     baseline = run_probes(intent)
     watch = flows_up(baseline)
-    print(f"{len(watch)}/{len(baseline)} luồng đang thông")
+    log["flows_before"] = f"{len(watch)}/{len(baseline)}"
+    print(f"{log['flows_before']} luồng đang thông")
 
     print("\n--- ĐANG ÁP DỤNG ---")
     executed, failed = [], False
@@ -195,6 +221,8 @@ def main():
         for out in apply_node(node, node_items):
             note = f"   # {out.detail}" if out.detail else ""
             print(f"  {STATUS[out.status]:<6} {out.label}{note}")
+            log["steps"].append({"node": node, "label": out.label,
+                                 "status": STATUS[out.status], "note": out.detail})
             if out.status == "done":
                 executed += list(out.items)
             failed = failed or out.status == "failed"
@@ -207,29 +235,35 @@ def main():
     if not failed:
         print(f"\n--- KIỂM CHỨNG (chờ tối đa {args.verify_timeout} giây) ---")
         results, bad = wait_for_flows(intent, watch, args.verify_timeout)
+        log["regressions"] = [f"{p.src} → {p.dst}" for p in bad]
+        log["flows_after"] = f"{len(flows_up(results))}/{len(results)}"
         for p in bad:
             print(f"  XẤU ĐI: {p.src} → {p.dst}")
         if not bad:
-            print(f"  {len(flows_up(results))}/{len(results)} luồng thông, không luồng nào xấu đi.")
+            print(f"  {log['flows_after']} luồng thông, không luồng nào xấu đi.")
 
     if (failed or bad) and not args.no_rollback:
         reason = "có bước bị lỗi" if failed else "có luồng xấu đi sau khi áp dụng"
         print(f"\nHOÀN TÁC vì {reason}.")
-        do_rollback(executed, snapshot)
+        log["reason"] = reason
+        log["undo"] = do_rollback(executed, snapshot)
         print(f"\n--- KIỂM CHỨNG LẠI (chờ tối đa {args.verify_timeout} giây) ---")
         results, still_bad = wait_for_flows(intent, watch, args.verify_timeout)
+        log["flows_after_rollback"] = f"{len(flows_up(results))}/{len(results)}"
+        log["recovered"] = not still_bad
         if still_bad:
             for p in still_bad:
                 print(f"  VẪN HỎNG: {p.src} → {p.dst}")
             print("CẦN CAN THIỆP TAY: hoàn tác chưa đưa được các luồng về như trước.")
         else:
-            print(f"  {len(flows_up(results))}/{len(results)} luồng thông.")
+            print(f"  {log['flows_after_rollback']} luồng thông.")
             print("ĐÃ KHÔI PHỤC: các luồng từng thông đã thông lại.")
-        sys.exit(4)
+        finish(4, "HOÀN TÁC")
 
     after = build_plan(intent, asdict(collect_all()), nodes)
     left = [i for i in select_items(after, args.prune) if i.action in ("add", "remove")]
     left += [i for i in after if i.action == "blocked"]
+    log["left"] = [f"{i.node} {i.kind} {i.target}" for i in left]
     print()
     if left:
         print(f"CHƯA HỘI TỤ: còn {len(left)} mục:")
@@ -239,7 +273,9 @@ def main():
         print("HỘI TỤ: plan lại không còn mục nào cần làm.")
     if skipped:
         print(f"(còn {len(skipped)} mục thừa chưa gỡ vì không có --prune)")
-    sys.exit(1 if failed or bad or left else 0)
+    if failed or bad:
+        finish(1, "LỖI")
+    finish(1 if left else 0, "CHƯA HỘI TỤ" if left else "THÀNH CÔNG")
 
 
 if __name__ == "__main__":

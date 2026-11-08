@@ -55,7 +55,10 @@ class TestInverse(unittest.TestCase):
     def test_ospf_and_sysctl_are_not_invertible(self):
         self.assertIsNone(inverse(item("ospf", "router", "router ospf", "vtysh"), None))
         self.assertIsNone(inverse(item("sysctl", "ip_forward", "sysctl -w net.ipv4.ip_forward=1"), None))
-
+    def test_pruned_vlan_is_restored_with_original_flags(self):
+        before = {"vlans": [{"port": "eth3", "vlans": [{"vid": 30, "pvid": True, "untagged": True}]}]}
+        self.assertEqual(inverse(item("vlan-extra", "eth3 vid 30"), before),
+                         ["bridge vlan add dev eth3 vid 30 pvid untagged"])
 
 class TestRollback(unittest.TestCase):
     def test_runs_in_reverse_and_reports_uninvertible(self):

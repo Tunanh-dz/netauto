@@ -50,6 +50,10 @@ def inverse(item, device):
     if kind == "addr-extra":                       # bước gỡ (prune): đảo ngược là thêm lại
         parts = item.command.split()
         return [f"ip addr add {parts[3]} dev {parts[5]}"]
+    if kind == "vlan-extra":                      # bước gỡ (prune): đảo ngược là thêm lại đúng như trước
+        port, _, vid = t.split()
+        old = ports.get(port, {}).get(int(vid))
+        return [_vlan_add(port, int(vid), old)] if old else None
     if kind == "vlan-trunk":
         port, _, vid = t.split()
         return _restore_vlan(port, int(vid), ports)
