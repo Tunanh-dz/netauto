@@ -31,6 +31,9 @@ hosts:
   h-eng:   {vlan: 20, ip: 192.168.20.10/24}
   h-mgmt:  {vlan: 99, ip: 192.168.99.10/24}
 
+monitoring:
+  # Cổng quản lý do Docker cấp IP, không thuộc intent: bỏ qua khi so snapshot
+  ignore_interfaces: [eth0]
 
 probes:
   - {src: h-sales, dst: h-eng}     # đi qua liên kết r1-r2 (OSPF)

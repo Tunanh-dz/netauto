@@ -10,6 +10,13 @@ INTENT_PATH = "intent/network.yml"
 class IntentError(Exception):
     pass
 
+DEFAULT_IGNORE_INTERFACES = ("eth0",)
+
+
+def ignore_interfaces(intent: dict) -> frozenset:
+    """Cổng bị bỏ qua khi so snapshot (mặc định eth0, cổng quản lý của Docker)."""
+    mon = (intent or {}).get("monitoring") or {}
+    return frozenset(mon.get("ignore_interfaces", DEFAULT_IGNORE_INTERFACES))
 
 def load_intent(path: str = INTENT_PATH) -> dict:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
@@ -29,6 +36,12 @@ def validate_intent(data) -> list[str]:
             errors.append(f"thiếu hoặc rỗng mục '{key}'")
     if errors:
         return errors
+    
+    mon = data.get("monitoring")
+    if mon is not None:
+        ign = mon.get("ignore_interfaces", []) if isinstance(mon, dict) else None
+        if not isinstance(ign, list) or not all(isinstance(x, str) for x in ign):
+            errors.append("monitoring.ignore_interfaces phải là danh sách tên cổng")
 
     nets = {}
     for vid, v in data["vlans"].items():

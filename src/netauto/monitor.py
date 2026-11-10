@@ -6,13 +6,14 @@ from netauto import db, health, incidents, perf, probe
 from netauto.check import check_snapshot
 from netauto.collector import collect_all
 from netauto.diff import diff_snapshots
-from netauto.intent import INTENT_PATH, load_intent
+from netauto.intent import INTENT_PATH, ignore_interfaces, load_intent
 
 
 def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
                 intent_path: str = INTENT_PATH) -> None:
     """Chạy `count` lần (0 = chạy mãi đến khi bấm Ctrl+C)."""
     intent = load_intent(intent_path)
+    ignore = ignore_interfaces(intent)       # cổng quản lý: không đưa vào so sánh
     probe.flows_from_intent(intent)          # báo lỗi sớm nếu mục probes sai
     conn = incidents.connect(db_path)
     probe.ensure_schema(conn)
@@ -33,7 +34,7 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
             reach = sum(1 for d in data["devices"] if d["reachable"])
             errs = sum(len(d["errors"]) for d in data["devices"])
 
-            changes = diff_snapshots(prev, data) if prev else {}
+            changes = diff_snapshots(prev, data, ignore) if prev else {}
             for node, change in changes.items():
                 db.save_events(conn, sid, at, node, change)
             n_changes = sum(len(c["mất"]) + len(c["mới"]) for c in changes.values())

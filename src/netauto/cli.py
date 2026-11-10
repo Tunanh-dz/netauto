@@ -6,6 +6,7 @@ from dataclasses import asdict
 from netauto import db
 from netauto.collector import collect_all, save_snapshot
 from netauto.diff import diff_snapshots, load_snapshot
+from netauto.intent import ignore_interfaces, load_intent
 from netauto.monitor import run_monitor
 
 
@@ -80,7 +81,8 @@ def main():
         if args.save:
             print("\nĐã lưu:", save_snapshot(snapshot))
     elif args.cmd == "diff":
-        print_diff(diff_snapshots(load_snapshot(args.old), load_snapshot(args.new)))
+        ign = ignore_interfaces(load_intent())
+        print_diff(diff_snapshots(load_snapshot(args.old), load_snapshot(args.new), ign))
     elif args.cmd == "monitor":
         run_monitor(args.interval, args.count, args.db)
     elif args.cmd == "history":

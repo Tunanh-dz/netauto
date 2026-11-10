@@ -1,8 +1,7 @@
 import copy
 import unittest
 
-from netauto.intent import load_intent, validate_intent
-
+from netauto.intent import ignore_interfaces, load_intent, validate_intent
 
 class TestIntent(unittest.TestCase):
     def setUp(self):
@@ -21,6 +20,15 @@ class TestIntent(unittest.TestCase):
         bad["hosts"]["h-sales"]["ip"] = "10.9.9.9/24"
         self.assertTrue(any("h-sales" in e for e in validate_intent(bad)))
 
+    def test_eth0_ignored_by_default_and_by_intent(self):
+        self.assertEqual(ignore_interfaces({}), frozenset({"eth0"}))
+        self.assertEqual(ignore_interfaces(self.intent), frozenset({"eth0"}))
+        self.assertEqual(ignore_interfaces({"monitoring": {"ignore_interfaces": []}}),
+                         frozenset())
 
+    def test_bad_monitoring_section(self):
+        bad = copy.deepcopy(self.intent)
+        bad["monitoring"] = {"ignore_interfaces": "eth0"}
+        self.assertTrue(any("ignore_interfaces" in e for e in validate_intent(bad)))
 if __name__ == "__main__":
     unittest.main()
