@@ -216,7 +216,8 @@ def print_table(rows: list[dict]) -> None:
         root = f"#{r['root_id']}" if r["root_id"] else "-"
         print(f"{r['id']:<4}{r['severity'].upper():<10}{r['node']:<8}{r['opened_at']:<27}"
               f"{_span(r):<12}{root:<6}{_reason(r):<24}{r['message']}")
-    if any(r["spans_gap"] for r in rows):
+    if any(r["spans_gap"] and r["closed_at"] and r["close_reason"] != "cleared_during_gap"
+           for r in rows):
         print("(* thời lượng gồm cả khoảng trống giám sát, nên chỉ là cận trên)")
 
 

@@ -157,7 +157,24 @@ class TestGap(unittest.TestCase):
         _, closed = incidents.record(conn, [], T3, 3)
         self.assertEqual(closed[0]["close_reason"], "resolved")
         self.assertEqual(closed[0]["duration"], 1458.0)         # gồm khoảng trống: hiển thị có dấu *
-
+    def test_footnote_only_when_an_asterisk_is_shown(self):
+        import contextlib, io
+        conn = fresh()
+        incidents.record(conn, [IFACE], T0, 1)
+        incidents.record(conn, [], T2, 2, after_gap=True)       # đóng trong khoảng trống: "không rõ"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            incidents.print_table(incidents.list_incidents(conn))
+        self.assertNotIn("*", buf.getvalue())
+        conn = fresh()
+        incidents.record(conn, [IFACE], T0, 1)
+        incidents.record(conn, [IFACE], T2, 2, after_gap=True)
+        incidents.record(conn, [], T3, 3)                        # hết sau khoảng trống: có dấu *
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            incidents.print_table(incidents.list_incidents(conn))
+        self.assertIn("giây*", buf.getvalue())
+        self.assertIn("cận trên", buf.getvalue())
 
 class TestMigration(unittest.TestCase):
     def test_old_database_is_upgraded_without_losing_rows(self):
