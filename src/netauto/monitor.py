@@ -51,10 +51,10 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
             results = probe.run_probes(intent)
             probe.save_probes(conn, sid, at, results)
             perf.push(history, results)
-            perf_found = perf.perf_findings(results, history)
+            perf_found = perf.perf_findings(results, history, intent)
 
             opened, closed = incidents.record(
-                conn, config_findings + perf_found, at, sid)
+                conn, config_findings + perf_found, at, sid, after_gap=after_gap)
             n_open = len(incidents.open_incidents(conn))
 
             # điểm sức khỏe chỉ dùng lỗi cấu hình, vì luồng ping đã được tính riêng
@@ -71,11 +71,16 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
                     print(f"    {node}  - {fact}")
                 for fact in change["mới"]:
                     print(f"    {node}  + {fact}")
-            for f in opened:
-                print(f"    MỞ   [{f.severity}] {f.node}: {f.message}")
+            for r in incidents.opened_at_snapshot(conn, sid):
+                why = f"  ← triệu chứng của #{r['root_id']}" if r["root_id"] else ""
+                print(f"    MỞ   #{r['id']} [{r['severity']}] {r['node']}: {r['message']}{why}")
             for r in closed:
-                print(f"    ĐÓNG {r['node']}: {r['message']} "
-                      f"(kéo dài {r['duration']:.0f} giây)")
+                took = ("không rõ thời lượng" if r["duration"] is None
+                        else f"kéo dài {r['duration']:.0f} giây")
+                why = incidents.REASON_TEXT.get(r["close_reason"], r["close_reason"])
+                if r["successor_id"]:
+                    why += f" → #{r['successor_id']}"
+                print(f"    ĐÓNG #{r['id']} {r['node']}: {r['message']} ({took}; {why})")
             for p in results:
                 state = health.flow_state(p)
                 if state != "ok":
