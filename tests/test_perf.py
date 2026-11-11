@@ -46,6 +46,15 @@ class TestPerf(unittest.TestCase):
             perf.push(history, [result()])
         self.assertEqual(len(history[("h-a", "h-b")]), perf.WINDOW)
 
+    def test_subject_and_scope_from_intent(self):
+        intent = {"hosts": {"h-a": {"vlan": 10}, "h-b": {"vlan": 20}}}
+        history = {}
+        perf.push(history, [result(received=0, rtt=None)])
+        f = perf.perf_findings([result(received=0, rtt=None)], history, intent)[0]
+        self.assertEqual(f.subject, "h-a→h-b")
+        self.assertEqual(f.scope, (10, 20))
 
+    def test_scope_empty_without_intent(self):
+        self.assertEqual(findings_after(result(received=0, rtt=None))[0].scope, ())
 if __name__ == "__main__":
     unittest.main()

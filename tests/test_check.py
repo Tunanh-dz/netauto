@@ -69,7 +69,15 @@ class TestRouter(unittest.TestCase):
     def test_missing_subinterface(self):
         f = check_router("r1", router_device(drop="eth1.10"), INTENT)
         self.assertEqual([(x.check, x.kind) for x in f], [("router.subinterface", "missing")])
-
+    def test_scope_of_findings(self):
+        sub = check_router("r1", router_device(drop="eth1.10"), INTENT)[0]
+        self.assertEqual(sub.scope, (10,))
+        dev = {"node": "r2", "reachable": False, "interfaces": [], "routes": [],
+               "vlans": [], "ospf_neighbors": [], "errors": []}
+        snap = {"devices": [dev]}
+        down = [f for f in check_snapshot(snap, INTENT)
+                if f.check == "device.reachable" and f.node == "r2"][0]
+        self.assertEqual(down.scope, (10, 20, 30, 99))      # router mất = mọi VLAN
 
 class TestLive(unittest.TestCase):
     """Cần lab đang chạy và khớp intent."""
