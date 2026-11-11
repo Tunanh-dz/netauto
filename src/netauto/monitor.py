@@ -2,7 +2,7 @@
 import time
 from dataclasses import asdict
 
-from netauto import db, health, incidents, perf, probe
+from netauto import db, health, incidents, perf, probe, runs
 from netauto.check import check_snapshot
 from netauto.collector import collect_all
 from netauto.diff import diff_snapshots
@@ -18,14 +18,22 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
     conn = incidents.connect(db_path)
     probe.ensure_schema(conn)
     health.ensure_schema(conn)
+    runs.ensure_schema(conn)
     prev = db.latest_snapshot(conn)
+    run_id, gap = runs.start_run(conn, interval, prev["taken_at"] if prev else None)
     if prev:
         print(f"(so sánh với snapshot lưu trước đó, lúc {prev['taken_at']})")
+    if gap:
+        print(f"!! {runs.describe_gap(gap)}")
+        print("   Thay đổi phát hiện ở vòng đầu là tích lũy trong khoảng trống, "
+              "không rõ xảy ra lúc nào.")
     carried = incidents.open_incidents(conn)
     if carried:
         print(f"(còn {len(carried)} sự cố mở từ lần chạy trước)")
+    after_gap = gap is not None              # chỉ đúng với vòng đầu tiên
     history = {}                             # lịch sử trạng thái từng luồng ping
     done = 0
+    clean = False                            # True nếu dừng có chủ đích
     try:
         while True:
             data = asdict(collect_all())
@@ -56,6 +64,8 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
             print(f"[{at}] snapshot #{sid}: reachable {reach}/{len(data['devices'])}, "
                   f"lỗi thu thập {errs}, thay đổi {n_changes}, sự cố đang mở {n_open}, "
                   f"sức khỏe {h['score']} ({h['grade']})")
+            if after_gap and changes:
+                print("    (các thay đổi dưới đây tích lũy trong khoảng trống giám sát)")
             for node, change in changes.items():
                 for fact in change["mất"]:
                     print(f"    {node}  - {fact}")
@@ -74,11 +84,15 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
                           f"mất {p.loss_pct:.0f}% gói, RTT {rtt}")
 
             prev = data
+            after_gap = False
             done += 1
             if count and done >= count:
+                clean = True
                 break
             time.sleep(interval)
     except KeyboardInterrupt:
+        clean = True
         print("\nĐã dừng giám sát.")
     finally:
+        runs.stop_run(conn, run_id, clean)
         conn.close()
