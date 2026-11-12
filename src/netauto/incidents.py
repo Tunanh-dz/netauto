@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS incidents (
     close_reason    TEXT,
     successor_id    INTEGER,
     root_id         INTEGER,                       -- NULL = sự cố gốc
-    spans_gap       INTEGER NOT NULL DEFAULT 0     -- 1 = tồn tại qua khoảng trống giám sát
+    spans_gap       INTEGER NOT NULL DEFAULT 0,    -- 1 = tồn tại qua khoảng trống giám sát
+    after_maintenance INTEGER NOT NULL DEFAULT 0   -- 1 = lỗi còn sau cửa sổ bảo trì
 );
 """
 
@@ -45,6 +46,7 @@ NEW_COLUMNS = {
     "successor_id": "INTEGER",
     "root_id": "INTEGER",
     "spans_gap": "INTEGER NOT NULL DEFAULT 0",
+    "after_maintenance": "INTEGER NOT NULL DEFAULT 0",
 }
 
 REASON_TEXT = {
@@ -89,8 +91,17 @@ def open_incidents(conn) -> list[dict]:
     return [dict(zip(cols, r)) for r in rows]
 
 
-def plan(open_rows: list[dict], findings: list[Finding]):
-    """Hàm thuần. Trả về (finding cần mở, id sự cố cần đóng)."""
+def key_of(f: Finding) -> tuple:
+    return (f.node, f.check, f.kind, f.message)
+
+
+def plan(open_rows: list[dict], findings: list[Finding], hold=()):
+    """Hàm thuần. Trả về (finding cần mở, id sự cố cần đóng).
+
+    hold: các finding đang bị giữ lại vì bảo trì. Sự cố mở sẵn của chúng không bị đóng
+    (chưa biết kết quả bảo trì).
+    """
+    held = {key_of(f) for f in hold}
     current = {(f.node, f.check, f.kind, f.message): f for f in findings}
     # thiết bị không truy cập được = điểm mù: không đóng sự cố khác của nó
     blind = {f.node for f in findings if f.check == "device.reachable"}
@@ -99,7 +110,7 @@ def plan(open_rows: list[dict], findings: list[Finding]):
                 for r in open_rows}
     to_open = [f for key, f in current.items() if key not in existing]
     to_close = [r["id"] for key, r in existing.items()
-                if key not in current
+                if key not in current and key not in held
                 and not (r["node"] in blind and r["check_code"] != "device.reachable")]
     return to_open, to_close
 
@@ -132,7 +143,7 @@ def refresh_roots(conn, snapshot_id: int) -> None:
 
 
 def record(conn, findings: list[Finding], at: str, snapshot_id: int,
-           after_gap: bool = False):
+           after_gap: bool = False, hold=(), flagged=frozenset()):
     """Áp dụng kế hoạch vào DB. Trả về (finding đã mở, sự cố đã đóng).
 
     after_gap=True: đây là vòng đầu sau khoảng trống giám sát. Sự cố đang mở được đánh dấu
@@ -142,15 +153,16 @@ def record(conn, findings: list[Finding], at: str, snapshot_id: int,
     current_open = open_incidents(conn)
     if after_gap and current_open:
         conn.execute("UPDATE incidents SET spans_gap = 1 WHERE closed_at IS NULL")
-    to_open, to_close = plan(current_open, findings)
+    to_open, to_close = plan(current_open, findings, hold)
 
     new_ids = {}
     for f in to_open:
         cur = conn.execute(
             "INSERT INTO incidents (node, check_code, severity, kind, message, "
-            "opened_at, opened_snapshot, subject, scope) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "opened_at, opened_snapshot, subject, scope, after_maintenance) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (f.node, f.check, f.severity, f.kind, f.message, at, snapshot_id,
-             f.subject, rootcause.format_scope(f.scope)))
+             f.subject, rootcause.format_scope(f.scope), int(key_of(f) in flagged)))
         new_ids[(f.node, f.check, f.subject)] = cur.lastrowid
 
     by_id = {r["id"]: r for r in current_open}
@@ -174,9 +186,9 @@ def record(conn, findings: list[Finding], at: str, snapshot_id: int,
 
 def opened_at_snapshot(conn, snapshot_id: int) -> list[dict]:
     """Sự cố mở ở snapshot này, kèm gốc của chúng (để in ra màn hình)."""
-    cols = ("id", "node", "severity", "message", "root_id")
+    cols = ("id", "node", "severity", "message", "root_id", "after_maintenance")
     rows = conn.execute(
-        "SELECT id, node, severity, message, root_id FROM incidents "
+        "SELECT id, node, severity, message, root_id, after_maintenance FROM incidents "
         "WHERE opened_snapshot = ? ORDER BY id", (snapshot_id,)).fetchall()
     return [dict(zip(cols, r)) for r in rows]
 

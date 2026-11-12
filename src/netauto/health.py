@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS health (
     critical       INTEGER NOT NULL,
     warning        INTEGER NOT NULL,
     flows_down     INTEGER NOT NULL,
-    flows_degraded INTEGER NOT NULL
+    flows_degraded INTEGER NOT NULL,
+    maintenance_id INTEGER              -- có giá trị = điểm đo trong lúc bảo trì
 );
 """
 
@@ -70,21 +71,25 @@ def score(findings, probes) -> dict:
 
 def ensure_schema(conn) -> None:
     conn.executescript(SCHEMA)
+    have = {r[1] for r in conn.execute("PRAGMA table_info(health)")}
+    if "maintenance_id" not in have:        # CSDL cũ: nâng cấp tại chỗ
+        conn.execute("ALTER TABLE health ADD COLUMN maintenance_id INTEGER")
+        conn.commit()
 
 
-def save_health(conn, snapshot_id: int, at: str, h: dict) -> None:
+def save_health(conn, snapshot_id: int, at: str, h: dict, maintenance_id=None) -> None:
     conn.execute(
         "INSERT INTO health (snapshot_id, at, score, grade, critical, warning, "
-        "flows_down, flows_degraded) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "flows_down, flows_degraded, maintenance_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (snapshot_id, at, h["score"], h["grade"], h["critical"], h["warning"],
-         h["flows_down"], h["flows_degraded"]))
+         h["flows_down"], h["flows_degraded"], maintenance_id))
     conn.commit()
 
 
 def list_health(conn, limit: int = 20):
     return conn.execute(
-        "SELECT at, score, grade, critical, warning, flows_down, flows_degraded "
-        "FROM health ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        "SELECT at, score, grade, critical, warning, flows_down, flows_degraded, "
+        "maintenance_id FROM health ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
 
 
 def print_probes(results) -> None:
@@ -108,8 +113,9 @@ def main():
         conn = db.connect(args.db)
         ensure_schema(conn)
         print(f"{'THỜI ĐIỂM':<16}{'ĐIỂM':<6}{'MỨC':<11}NGHIÊM TRỌNG  CẢNH BÁO  LUỒNG DOWN  LUỒNG CHẬM")
-        for at, sc, grade, crit, warn, down, deg in list_health(conn, args.history):
-            print(f"{timefmt.stamp(at):<16}{sc:<6}{grade:<11}{crit:<14}{warn:<10}{down:<13}{deg}")
+        for at, sc, grade, crit, warn, down, deg, mid in list_health(conn, args.history):
+            tag = f"   (bảo trì #{mid}: không tính vào thống kê)" if mid else ""
+            print(f"{timefmt.stamp(at):<16}{sc:<6}{grade:<11}{crit:<14}{warn:<10}{down:<13}{deg}{tag}")
         conn.close()
         return
 
