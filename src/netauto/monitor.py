@@ -2,7 +2,7 @@
 import time
 from dataclasses import asdict
 
-from netauto import db, health, incidents, perf, probe, runs
+from netauto import db, health, incidents, perf, probe, runs, timefmt
 from netauto.check import check_snapshot
 from netauto.collector import collect_all
 from netauto.diff import diff_snapshots
@@ -22,7 +22,7 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
     prev = db.latest_snapshot(conn)
     run_id, gap = runs.start_run(conn, interval, prev["taken_at"] if prev else None)
     if prev:
-        print(f"(so sánh với snapshot lưu trước đó, lúc {prev['taken_at']})")
+        print(f"(so sánh với snapshot lưu trước đó, lúc {timefmt.full(prev['taken_at'])})")
     if gap:
         print(f"!! {runs.describe_gap(gap)}")
         print("   Thay đổi phát hiện ở vòng đầu là tích lũy trong khoảng trống, "
@@ -34,6 +34,7 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
     history = {}                             # lịch sử trạng thái từng luồng ping
     done = 0
     clean = False                            # True nếu dừng có chủ đích
+    shown_day = None                         # in dòng ngày mỗi khi sang ngày mới
     try:
         while True:
             data = asdict(collect_all())
@@ -61,7 +62,10 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
             h = health.score(config_findings, results)
             health.save_health(conn, sid, at, h)
 
-            print(f"[{at}] snapshot #{sid}: reachable {reach}/{len(data['devices'])}, "
+            if timefmt.day(at) != shown_day:
+                shown_day = timefmt.day(at)
+                print(f"--- ngày {shown_day} ---")
+            print(f"[{timefmt.clock(at)}] snapshot #{sid}: reachable {reach}/{len(data['devices'])}, "
                   f"lỗi thu thập {errs}, thay đổi {n_changes}, sự cố đang mở {n_open}, "
                   f"sức khỏe {h['score']} ({h['grade']})")
             if after_gap and changes:

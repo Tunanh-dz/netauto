@@ -3,7 +3,7 @@ import argparse
 import json
 from dataclasses import asdict
 
-from netauto import db
+from netauto import db, timefmt
 from netauto.collector import collect_all, save_snapshot
 from netauto.diff import diff_snapshots, load_snapshot
 from netauto.intent import ignore_interfaces, load_intent
@@ -11,7 +11,7 @@ from netauto.monitor import run_monitor
 
 
 def print_summary(snapshot):
-    print(f"Snapshot lúc {snapshot.taken_at}\n")
+    print(f"Snapshot lúc {timefmt.full(snapshot.taken_at)}\n")
     print(f"{'NODE':<9}{'VAI TRÒ':<9}{'REACH':<7}{'IF':<4}{'ROUTE':<7}"
           f"{'VLAN-PORT':<11}{'OSPF':<10}LỖI")
     for d in snapshot.devices:
@@ -37,16 +37,16 @@ def print_diff(diff):
 def print_history(path, limit):
     conn = db.connect(path)
     print(f"== {limit} snapshot gần nhất ==")
-    print(f"{'ID':<5}{'THỜI ĐIỂM':<28}{'THIẾT BỊ':<10}{'REACH':<7}LỖI")
+    print(f"{'ID':<5}{'THỜI ĐIỂM':<17}{'THIẾT BỊ':<10}{'REACH':<7}LỖI")
     for sid, at, dev, reach, errs in db.list_snapshots(conn, limit):
-        print(f"{sid:<5}{at:<28}{dev:<10}{reach:<7}{errs}")
+        print(f"{sid:<5}{timefmt.stamp(at):<17}{dev:<10}{reach:<7}{errs}")
     print("\n== Sự kiện gần nhất (mới nhất ở trên) ==")
     events = db.list_events(conn, 30)
     if not events:
         print("(chưa có sự kiện nào)")
     for at, node, kind, fact in events:
         sign = "-" if kind == "mất" else "+"
-        print(f"{at}  {node:<8}{sign} {fact}")
+        print(f"{timefmt.stamp(at)}  {node:<8}{sign} {fact}")
     conn.close()
 
 

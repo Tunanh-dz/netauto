@@ -13,7 +13,7 @@ Sự cố triệu chứng trỏ về sự cố gốc qua root_id (NULL = chính 
 import argparse
 from datetime import datetime
 
-from netauto import db, rootcause
+from netauto import db, rootcause, timefmt
 from netauto.check import Finding
 
 SCHEMA = """
@@ -210,11 +210,11 @@ def _reason(r: dict) -> str:
 
 
 def print_table(rows: list[dict]) -> None:
-    print(f"{'ID':<4}{'MỨC':<10}{'NODE':<8}{'MỞ LÚC':<27}{'KÉO DÀI':<12}"
+    print(f"{'ID':<4}{'MỨC':<10}{'NODE':<8}{'MỞ LÚC':<16}{'KÉO DÀI':<12}"
           f"{'GỐC':<6}{'LÝ DO ĐÓNG':<24}MÔ TẢ")
     for r in rows:
         root = f"#{r['root_id']}" if r["root_id"] else "-"
-        print(f"{r['id']:<4}{r['severity'].upper():<10}{r['node']:<8}{r['opened_at']:<27}"
+        print(f"{r['id']:<4}{r['severity'].upper():<10}{r['node']:<8}{timefmt.stamp(r['opened_at']):<16}"
               f"{_span(r):<12}{root:<6}{_reason(r):<24}{r['message']}")
     if any(r["spans_gap"] and r["closed_at"] and r["close_reason"] != "cleared_during_gap"
            for r in rows):

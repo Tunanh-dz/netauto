@@ -6,6 +6,8 @@ thời điểm xảy ra hay thời lượng của bất cứ điều gì.
 """
 from datetime import datetime
 
+from netauto import timefmt
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS monitor_runs (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,5 +92,5 @@ def describe_gap(gap: dict) -> str:
     how = {True: "lần chạy trước dừng bình thường",
            False: "lần chạy trước bị ngắt đột ngột",
            None: "không có bản ghi lần chạy trước"}[gap.get("previous_clean")]
-    return (f"CÓ KHOẢNG TRỐNG GIÁM SÁT từ {gap['from']} đến {gap['to']} "
+    return (f"CÓ KHOẢNG TRỐNG GIÁM SÁT: {timefmt.span(gap['from'], gap['to'])} "
             f"({fmt_span(gap['seconds'])}; {how})")

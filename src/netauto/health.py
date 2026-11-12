@@ -5,7 +5,7 @@ Chạy: python3 -m netauto.health [--history N]
 import argparse
 from dataclasses import asdict
 
-from netauto import db, probe
+from netauto import db, probe, timefmt
 from netauto.check import check_snapshot
 from netauto.collector import collect_all
 from netauto.intent import INTENT_PATH, load_intent
@@ -107,9 +107,9 @@ def main():
     if args.history:
         conn = db.connect(args.db)
         ensure_schema(conn)
-        print(f"{'THỜI ĐIỂM':<28}{'ĐIỂM':<6}{'MỨC':<11}NGHIÊM TRỌNG  CẢNH BÁO  LUỒNG DOWN  LUỒNG CHẬM")
+        print(f"{'THỜI ĐIỂM':<16}{'ĐIỂM':<6}{'MỨC':<11}NGHIÊM TRỌNG  CẢNH BÁO  LUỒNG DOWN  LUỒNG CHẬM")
         for at, sc, grade, crit, warn, down, deg in list_health(conn, args.history):
-            print(f"{at:<28}{sc:<6}{grade:<11}{crit:<14}{warn:<10}{down:<13}{deg}")
+            print(f"{timefmt.stamp(at):<16}{sc:<6}{grade:<11}{crit:<14}{warn:<10}{down:<13}{deg}")
         conn.close()
         return
 

@@ -11,6 +11,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from netauto import timefmt
+
 DB_PATH = "data/netauto.db"
 GENESIS = "0" * 64
 FIELDS = ("at", "actor", "intent_path", "intent_sha", "nodes", "prune",
@@ -98,10 +100,10 @@ def print_list(conn, limit: int) -> None:
     if not rows:
         print("Chưa có bản ghi kiểm toán.")
         return
-    print(f"{'ID':>4}  {'THỜI ĐIỂM':<25} {'NGƯỜI':<12} {'KẾT QUẢ':<12} {'MÃ':>2}  "
+    print(f"{'ID':>4}  {'THỜI ĐIỂM':<15} {'NGƯỜI':<12} {'KẾT QUẢ':<12} {'MÃ':>2}  "
           f"{'CỜ':<6} {'INTENT':<13} {'THIẾT BỊ':<9} {'GIÂY':>6}")
     for r in reversed(rows):
-        print(f"{r['id']:>4}  {r['at']:<25} {r['actor']:<12} {r['result']:<12} "
+        print(f"{r['id']:>4}  {timefmt.stamp(r['at']):<15} {r['actor']:<12} {r['result']:<12} "
               f"{r['exit_code']:>2}  {'prune' if r['prune'] else '-':<6} "
               f"{r['intent_sha']:<13} {r['nodes']:<9} {r['duration_s']:>6.1f}")
 
@@ -111,7 +113,7 @@ def print_detail(conn, entry_id: int) -> None:
     if r is None:
         sys.exit(f"Không có bản ghi #{entry_id}")
     d = json.loads(r["detail"])
-    print(f"Bản ghi #{r['id']}: {r['result']} (mã {r['exit_code']}), {r['at']}, "
+    print(f"Bản ghi #{r['id']}: {r['result']} (mã {r['exit_code']}), {timefmt.full(r['at'])}, "
           f"{r['actor']}, {r['duration_s']:.1f} giây")
     print(f"Intent: {r['intent_path']} (sha {r['intent_sha']}); thiết bị: {r['nodes']}; "
           f"prune: {'có' if r['prune'] else 'không'}")

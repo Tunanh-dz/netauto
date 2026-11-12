@@ -51,6 +51,14 @@ class TestRuns(unittest.TestCase):
         self.assertIsNotNone(row[1])
         self.assertIn("KHOẢNG TRỐNG", runs.describe_gap(gap))
 
+    def test_describe_gap_is_human_readable(self):
+        gap = {"from": "2026-11-12T10:11:17+07:00", "to": "2026-11-12T10:18:49+07:00",
+               "seconds": 452, "previous_clean": True}
+        text = runs.describe_gap(gap)
+        self.assertIn("10:11:17 → 10:18:49 ngày 12/11/2026", text)
+        self.assertIn("7 phút 32 giây", text)
+        self.assertNotIn("+07:00", text)
+
     def test_no_gap_when_last_snapshot_is_recent(self):
         _, gap = runs.start_run(self.conn, 5, runs.now())
         self.assertIsNone(gap)
