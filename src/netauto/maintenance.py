@@ -60,6 +60,14 @@ def covers_time(w: dict, at: str, grace: int = GRACE_S) -> bool:
     """Hàm thuần. at nằm trong [mở, kết thúc + ân hạn]."""
     return _t(w["opened_at"]) <= _t(at) <= _t(window_end(w)) + timedelta(seconds=grace)
 
+def window_state(w: dict, at: str) -> str:
+    """Hàm thuần: open | ended | expired. Cửa sổ quá hạn mà chưa ai ghi closed_at
+    vẫn tính là expired (monitor chưa kịp quét không làm đổi sự thật)."""
+    if w.get("close_reason") == "expired":
+        return "expired"
+    if w.get("closed_at"):
+        return "ended"
+    return "expired" if _t(at) > _t(w["expires_at"]) else "open"
 
 def parse_nodes(text: str):
     return ALL if text.strip() == ALL else frozenset(n for n in text.split(",") if n.strip())
@@ -181,10 +189,14 @@ def forget_resolved(conn, current_keys: set) -> None:
                          "AND message=?", tuple(r))
     conn.commit()
 
-def describe(w: dict) -> str:
-    end = timefmt.clock(window_end(w))
+def describe(w: dict, at: str | None = None) -> str:
+    end = window_end(w)
     nodes = "tất cả thiết bị" if w["nodes"] == ALL else w["nodes"]
-    return f"#{w['id']} {nodes}, {w['reason']} (đến {end})"
+    head = f"#{w['id']} {nodes}, {w['reason']}"
+    if at and _t(at) > _t(end):
+        grace_end = (_t(end) + timedelta(seconds=GRACE_S)).isoformat(timespec="seconds")
+        return f"{head} (đã kết thúc {timefmt.clock(end)}, ân hạn đến {timefmt.clock(grace_end)})"
+    return f"{head} (đến {timefmt.clock(end)})"
 
 
 def _audit(result: str, nodes, detail: dict) -> None:
@@ -232,8 +244,8 @@ def main():
         if not rows:
             print("(chưa có cửa sổ bảo trì nào)")
         for w in rows:
-            state = ("ĐANG MỞ" if not w["closed_at"] else
-                     "hết hạn" if w["close_reason"] == "expired" else "đã đóng")
+            state = {"open": "ĐANG MỞ", "expired": "hết hạn",
+                     "ended": "đã đóng"}[window_state(w, now())]
             print(f"#{w['id']:<3}{state:<9}{timefmt.stamp(w['opened_at']):<16}"
                   f"{w['nodes']:<10}{w['actor']:<10}{w['reason']}")
     conn.close()

@@ -193,6 +193,30 @@ class TestHealthMigration(unittest.TestCase):
              "flows_down": 0, "flows_degraded": 0}
         health.save_health(conn, 1, T0, h, maintenance_id=3)
         self.assertEqual(health.list_health(conn, 1)[0][-1], 3)
+class TestWindowState(unittest.TestCase):
+    def test_open(self):
+        self.assertEqual(m.window_state(win(), T_IN), "open")
+
+    def test_expired_but_not_swept(self):
+        # quá hạn nhưng chưa ai ghi closed_at: vẫn phải hiện "hết hạn"
+        self.assertEqual(m.window_state(win(), T_AFTER_GRACE), "expired")
+
+    def test_ended_by_hand(self):
+        w = win(closed="2026-01-01T10:02:00+00:00")
+        w["close_reason"] = "ended"
+        self.assertEqual(m.window_state(w, T_IN), "ended")
+
+    def test_swept_expired(self):
+        w = win(closed="2026-01-01T10:05:00+00:00")
+        w["close_reason"] = "expired"
+        self.assertEqual(m.window_state(w, T_AFTER_GRACE), "expired")
+class TestDescribe(unittest.TestCase):
+    def test_during_window(self):
+        self.assertNotIn("ân hạn", m.describe(win(), T_IN))
+
+    def test_during_grace_says_so(self):
+        self.assertIn("ân hạn", m.describe(win(), "2026-01-01T10:05:30+00:00"))
+
 
 if __name__ == "__main__":
     unittest.main()

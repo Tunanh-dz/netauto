@@ -77,7 +77,7 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
             print(f"[{timefmt.clock(at)}] snapshot #{sid}: reachable {reach}/{len(data['devices'])}, "
                   f"lỗi thu thập {errs}, thay đổi {n_changes}, sự cố đang mở {n_open}, "
                   f"sức khỏe {h['score']} ({h['grade']})"
-                  + (f", ĐANG BẢO TRÌ {maintenance.describe(windows[0])}" if windows else ""))
+                  + (f", ĐANG BẢO TRÌ {maintenance.describe(windows[0], at)}" if windows else ""))
             if held:
                 print(f"    (giữ lại {len(held)} lỗi vì đang bảo trì, chưa mở sự cố)")
             if after_gap and changes:

@@ -7,12 +7,14 @@ Mã thoát: 0 = xong hoặc không có gì, 1 = có bước lỗi / còn lệch 
           4 = đã hoàn tác (có bước lỗi hoặc luồng xấu đi)
 """
 import argparse
+import atexit
+import getpass
 import shlex
 import sys
 import time
 from dataclasses import asdict, dataclass
 
-from netauto import transport, audit
+from netauto import transport, audit, db, maintenance
 from netauto.collector import collect_all
 from netauto.intent import INTENT_PATH, load_intent
 from netauto.plan import build_plan, print_plan
@@ -136,7 +138,30 @@ def do_rollback(executed, snapshot):
         kinds = ", ".join(sorted({i.kind for i in cannot}))
         print(f"  (chưa hoàn tác được {len(cannot)} dòng gửi lại: {kinds}; chưa lưu trạng thái trước)")
         return [{"node": u.node, "command": u.command, "ok": u.ok} for u in undone]
- 
+def open_maintenance(db_path, nodes, ttl_s):
+    """Báo cho monitor biết ta sắp thay đổi mạng. Lỗi ở đây chỉ cảnh báo: cửa sổ bảo trì
+    chỉ làm bớt báo động giả, không được cản việc áp dụng. Tự đóng khi thoát (kể cả khi
+    gặp lỗi bất ngờ); nếu không kịp đóng thì cửa sổ vẫn tự hết hạn."""
+    try:
+        conn = db.connect(db_path)
+        maintenance.ensure_schema(conn)
+        wid = maintenance.open_window(conn, getpass.getuser(), "netauto.apply --yes",
+                                      set(nodes), ttl_s)
+        conn.close()
+    except Exception as exc:
+        print(f"CẢNH BÁO: không mở được cửa sổ bảo trì ({exc}); monitor có thể báo động giả.")
+        return None
+
+    def close():
+        try:
+            c = db.connect(db_path)
+            maintenance.close_window(c, wid)
+            c.close()
+        except Exception:
+            pass
+    atexit.register(close)
+    return wid
+
 def main():
     ap = argparse.ArgumentParser(prog="netauto.apply")
     ap.add_argument("--intent", default=INTENT_PATH)
@@ -148,6 +173,7 @@ def main():
     ap.add_argument("--verify-timeout", type=int, default=30,
                     help="số giây chờ mạng hội tụ khi kiểm chứng (mặc định 30)")
     ap.add_argument("--audit-db", default=audit.DB_PATH, help="file SQLite chứa nhật ký kiểm toán")
+    ap.add_argument("--db", default=db.DB_PATH, help="file SQLite của monitor (cửa sổ bảo trì)")
     args = ap.parse_args()
     started = time.monotonic()
 
@@ -207,7 +233,8 @@ def main():
         sys.exit(2 if pending else 0)
     if not groups:
         sys.exit(0)
-
+        # thời gian tối đa: đo trước + áp dụng + 2 lần kiểm chứng + ân hạn
+    log["window"] = open_maintenance(args.db, groups, 2 * args.verify_timeout + 60)
     print("\n--- ĐO TRƯỚC KHI ÁP DỤNG ---")
     baseline = run_probes(intent)
     watch = flows_up(baseline)

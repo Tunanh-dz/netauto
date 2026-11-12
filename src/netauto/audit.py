@@ -119,6 +119,8 @@ def print_detail(conn, entry_id: int) -> None:
           f"prune: {'có' if r['prune'] else 'không'}")
     if d.get("reason"):
         print(f"Lý do: {d['reason']}")
+    if d.get("window"):
+        print(f"Cửa sổ bảo trì: #{d['window']}")
     print(f"Luồng thông: trước {d.get('flows_before', '?')}, sau {d.get('flows_after', '?')}"
           + (f", sau hoàn tác {d['flows_after_rollback']}" if "flows_after_rollback" in d else ""))
     if d.get("regressions"):

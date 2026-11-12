@@ -20,6 +20,13 @@ fi
 
 python3 -m netauto.apply > /dev/null 2>&1
 code=$?
+WID=""
+if [ "$code" -ne 0 ]; then
+  # Cả quy trình (dựng lại + chờ + áp dụng) nằm trong một cửa sổ bảo trì.
+  WID=$(python3 -m netauto.maintenance start --reason "ensure.sh" --ttl 420 --print-id \
+        2>/dev/null) || WID=""
+  trap '[ -n "$WID" ] && python3 -m netauto.maintenance end "$WID" > /dev/null 2>&1' EXIT
+fi
 if [ "$code" -eq 3 ]; then
   echo "Hạ tầng hỏng (kế hoạch có mục CHẶN). Dựng lại lab..."
   bash scripts/lab.sh reset
