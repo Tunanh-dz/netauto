@@ -22,9 +22,13 @@ CREATE TABLE IF NOT EXISTS injections (
     restored_at     TEXT,
     status          TEXT    NOT NULL DEFAULT 'running',   -- running|detected|missed|invalid
     incident_id     INTEGER,                -- sự cố khớp (nếu được phát hiện)
-    detected_at     TEXT                    -- lúc monitor mở sự cố đó
+    detected_at     TEXT,                   -- giờ snapshot đầu tiên NHÌN THẤY lỗi (opened_at của sự cố)
+    seen_at         TEXT                    -- lúc sự cố CÓ MẶT trong DB (cảnh báo thật sự tồn tại)
 );
 """
+
+# Cột thêm sau này: CSDL cũ được nâng cấp tại chỗ.
+NEW_COLUMNS = {"seen_at": "TEXT"}
 
 
 @dataclass(frozen=True)
@@ -52,6 +56,11 @@ FAULTS = {f.name: f for f in [
 
 def ensure_schema(conn) -> None:
     conn.executescript(SCHEMA)
+    have = {r[1] for r in conn.execute("PRAGMA table_info(injections)")}
+    for col, decl in NEW_COLUMNS.items():
+        if col not in have:
+            conn.execute(f"ALTER TABLE injections ADD COLUMN {col} {decl}")
+    conn.commit()
 
 
 def start_injection(conn, fault: Fault, at: str, before_snapshot: int) -> int:
@@ -67,11 +76,21 @@ def mark_restored(conn, inj_id: int, at: str) -> None:
     conn.commit()
 
 
-def mark_status(conn, inj_id: int, status: str, incident=None) -> None:
-    conn.execute("UPDATE injections SET status = ?, incident_id = ?, detected_at = ? WHERE id = ?",
+def mark_status(conn, inj_id: int, status: str, incident=None, seen_at=None) -> None:
+    conn.execute("UPDATE injections SET status = ?, incident_id = ?, detected_at = ?, "
+                 "seen_at = ? WHERE id = ?",
                  (status, incident["id"] if incident else None,
-                  incident["opened_at"] if incident else None, inj_id))
+                  incident["opened_at"] if incident else None, seen_at, inj_id))
     conn.commit()
+
+
+def incidents_since(conn, before_snapshot: int) -> list[dict]:
+    """Các sự cố mở ở snapshot sau before_snapshot (ứng viên để find_detection chọn)."""
+    cols = ("id", "node", "check_code", "opened_snapshot", "opened_at")
+    rows = conn.execute(
+        "SELECT id, node, check_code, opened_snapshot, opened_at FROM incidents "
+        "WHERE opened_snapshot > ? ORDER BY id", (before_snapshot,)).fetchall()
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def find_detection(inj: dict, rows: list[dict]):
@@ -91,20 +110,26 @@ def detection_seconds(inj: dict, incident: dict) -> float:
 
 def summarize(rows: list[dict]) -> dict:
     """Hàm thuần. rows: các dòng injections đã có kết quả (status khác 'running').
-    Lần 'invalid' (điều kiện thí nghiệm không sạch) không tính vào tỉ lệ."""
+    Lần 'invalid' (điều kiện thí nghiệm không sạch) không tính vào tỉ lệ.
+    seconds = từ lúc gây lỗi đến lúc cảnh báo có mặt trong DB (thứ người vận hành trải nghiệm);
+    observed_seconds = đến snapshot đầu tiên nhìn thấy lỗi (chưa tính thời gian xử lý của vòng đó)."""
     valid = [r for r in rows if r["status"] in ("detected", "missed")]
-    times = [r["seconds"] for r in valid if r["status"] == "detected"]
-    out = {"runs": len(valid), "detected": len(times), "missed": len(valid) - len(times),
+    hit = [r for r in valid if r["status"] == "detected"]
+    times = [r["seconds"] for r in hit if r.get("seconds") is not None]
+    seen = [r["observed_seconds"] for r in hit if r.get("observed_seconds") is not None]
+    out = {"runs": len(valid), "detected": len(hit), "missed": len(valid) - len(hit),
            "invalid": sum(1 for r in rows if r["status"] == "invalid")}
-    out["rate"] = len(times) / len(valid) if valid else None
+    out["rate"] = len(hit) / len(valid) if valid else None
     if times:
         out.update(min=min(times), max=max(times), mean=statistics.mean(times),
                    median=statistics.median(times))
+    if seen:
+        out.update(obs_mean=statistics.mean(seen), obs_max=max(seen))
     return out
 
 
 COLS = ("id", "fault", "node", "expect_check", "injected_at", "before_snapshot",
-        "restored_at", "status", "incident_id", "detected_at")
+        "restored_at", "status", "incident_id", "detected_at", "seen_at")
 
 
 def list_injections(conn, limit: int = 20) -> list[dict]:
@@ -113,19 +138,23 @@ def list_injections(conn, limit: int = 20) -> list[dict]:
     out = []
     for r in rows:
         d = dict(zip(COLS, r))
-        d["seconds"] = (detection_seconds(d, {"opened_at": d["detected_at"]})
-                        if d["detected_at"] else None)
+        d["observed_seconds"] = (detection_seconds(d, {"opened_at": d["detected_at"]})
+                                 if d["detected_at"] else None)
+        d["seconds"] = (detection_seconds(d, {"opened_at": d["seen_at"]})
+                        if d["seen_at"] else None)
         out.append(d)
     return out
 
 
 def print_table(rows: list[dict]) -> None:
-    print(f"{'ID':<4}{'LỖI':<18}{'GÂY LÚC':<16}{'KẾT QUẢ':<12}{'PHÁT HIỆN SAU':<15}SỰ CỐ")
+    print(f"{'ID':<4}{'LỖI':<18}{'GÂY LÚC':<16}{'KẾT QUẢ':<10}{'THẤY LỖI SAU':<14}"
+          f"{'CẢNH BÁO SAU':<14}SỰ CỐ")
     for r in reversed(rows):
+        seen = f"{r['observed_seconds']:.1f} giây" if r["observed_seconds"] is not None else "-"
         took = f"{r['seconds']:.1f} giây" if r["seconds"] is not None else "-"
         inc = f"#{r['incident_id']}" if r["incident_id"] else "-"
         print(f"{r['id']:<4}{r['fault']:<18}{timefmt.stamp(r['injected_at']):<16}"
-              f"{r['status']:<12}{took:<15}{inc}")
+              f"{r['status']:<10}{seen:<14}{took:<14}{inc}")
 
 
 def print_summary(s: dict) -> None:
@@ -135,8 +164,11 @@ def print_summary(s: dict) -> None:
     print(f"\nTổng {s['runs']} lần: phát hiện {s['detected']}, bỏ sót {s['missed']} "
           f"(tỉ lệ phát hiện {s['rate']:.0%})" + (f"; {s['invalid']} lần không hợp lệ" if s["invalid"] else ""))
     if "mean" in s:
-        print(f"Thời gian phát hiện: nhỏ nhất {s['min']:.1f}, trung vị {s['median']:.1f}, "
-              f"trung bình {s['mean']:.1f}, lớn nhất {s['max']:.1f} giây (độ phân giải ~1 giây)")
+        print(f"Từ lúc gây lỗi đến khi cảnh báo có mặt: nhỏ nhất {s['min']:.1f}, "
+              f"trung vị {s['median']:.1f}, trung bình {s['mean']:.1f}, lớn nhất {s['max']:.1f} giây")
+    if "obs_mean" in s:
+        print(f"Đến snapshot đầu tiên nhìn thấy lỗi: trung bình {s['obs_mean']:.1f}, "
+              f"lớn nhất {s['obs_max']:.1f} giây (độ phân giải ~1 giây)")
 
 
 def main():

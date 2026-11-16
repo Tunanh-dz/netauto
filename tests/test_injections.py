@@ -40,13 +40,14 @@ class TestSeconds(unittest.TestCase):
 
 class TestSummarize(unittest.TestCase):
     def test_stats(self):
-        rows = [{"status": "detected", "seconds": 4.0}, {"status": "detected", "seconds": 8.0},
+        rows = [{"status": "detected", "seconds": 4.0, "observed_seconds": 1.0},
+                {"status": "detected", "seconds": 8.0, "observed_seconds": 3.0},
                 {"status": "missed", "seconds": None}, {"status": "invalid", "seconds": None}]
         s = inj.summarize(rows)
         self.assertEqual((s["runs"], s["detected"], s["missed"], s["invalid"]), (3, 2, 1, 1))
         self.assertAlmostEqual(s["rate"], 2 / 3)
         self.assertEqual((s["min"], s["max"], s["mean"], s["median"]), (4.0, 8.0, 6.0, 6.0))
-
+        self.assertEqual((s["obs_mean"], s["obs_max"]), (2.0, 3.0))
     def test_empty(self):
         s = inj.summarize([])
         self.assertEqual(s["runs"], 0)
@@ -59,11 +60,24 @@ class TestDb(unittest.TestCase):
         inj.ensure_schema(conn)
         f = inj.FAULTS["r1-subif-down"]
         i = inj.start_injection(conn, f, "2026-01-01T10:00:03.500+00:00", 10)
-        inj.mark_status(conn, i, "detected", row(5))
+        # snapshot thấy lỗi lúc :09, nhưng cảnh báo có mặt trong DB lúc :14.5 (sau khi ping xong)
+        inj.mark_status(conn, i, "detected", row(5), seen_at="2026-01-01T10:00:14.500+00:00")
         inj.mark_restored(conn, i, "2026-01-01T10:01:00+00:00")
         r = inj.list_injections(conn)[0]
         self.assertEqual((r["status"], r["incident_id"], r["fault"]), ("detected", 5, f.name))
-        self.assertAlmostEqual(r["seconds"], 5.5)
+        self.assertAlmostEqual(r["observed_seconds"], 5.5)
+        self.assertAlmostEqual(r["seconds"], 11.0)
+
+    def test_old_table_gets_seen_at_column(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE injections (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                     "fault TEXT NOT NULL, node TEXT NOT NULL, expect_check TEXT NOT NULL, "
+                     "injected_at TEXT NOT NULL, before_snapshot INTEGER NOT NULL, restored_at TEXT, "
+                     "status TEXT NOT NULL DEFAULT 'running', incident_id INTEGER, detected_at TEXT)")
+        inj.ensure_schema(conn)
+        i = inj.start_injection(conn, inj.FAULTS["r1-subif-down"], "2026-01-01T10:00:00+00:00", 1)
+        inj.mark_status(conn, i, "detected", row(5), seen_at="2026-01-01T10:00:08+00:00")
+        self.assertAlmostEqual(inj.list_injections(conn)[0]["seconds"], 8.0)
 
     def test_every_fault_has_matching_inject_and_restore(self):
         for f in inj.FAULTS.values():
