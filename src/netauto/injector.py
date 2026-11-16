@@ -88,7 +88,10 @@ def run_once(conn, fault, *, run=transport.run, clock=now, sleep=time.sleep, pol
     return injections.list_injections(conn, 1)[0]
 
 
-def main():
+EXIT_OK, EXIT_REFUSED, EXIT_RECOVERY, EXIT_INTERRUPTED = 0, 2, 3, 130
+
+
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="netauto.injector")
     ap.add_argument("--fault", action="append", choices=sorted(injections.FAULTS),
                     help="tên lỗi (có thể lặp lại)")
@@ -99,7 +102,7 @@ def main():
     ap.add_argument("--recover-timeout", type=float, default=90)
     ap.add_argument("--settle", type=float, default=10, help="giây nghỉ giữa hai lần đo")
     ap.add_argument("--db", default=db.DB_PATH)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     names = sorted(injections.FAULTS) if args.all else (args.fault or [])
     if not names:
@@ -111,13 +114,14 @@ def main():
         print(f"  {f.name:<16} {f.desc}")
     if not args.yes:
         print("\nXEM TRƯỚC: chưa gây lỗi nào. Thêm --yes để chạy (cần monitor đang chạy cùng DB).")
-        return
+        return EXIT_OK
 
     conn = db.connect(args.db)
     incidents.ensure_schema(conn)
     maintenance.ensure_schema(conn)
     injections.ensure_schema(conn)
     ids, total = [], args.runs * len(faults)
+    code = EXIT_OK
     try:
         for i in range(args.runs):
             for f in faults:
@@ -132,10 +136,13 @@ def main():
                       + (f"  ({r['note']})" if r.get("note") else ""))
     except NotClean as exc:
         print(f"\nDỪNG, chưa gây lỗi: {exc}")
+        code = EXIT_REFUSED
     except RecoveryFailed as exc:
         print(f"\nDỪNG: {exc}\nHãy chạy `bash scripts/ensure.sh` để đưa lab về trạng thái khỏe.")
+        code = EXIT_RECOVERY
     except KeyboardInterrupt:
         print("\nBị ngắt. Lỗi đang gây (nếu có) đã được khôi phục.")
+        code = EXIT_INTERRUPTED
     finally:
         rows = [r for r in injections.list_injections(conn, 500) if r["id"] in set(ids)]
         if rows:
@@ -143,7 +150,7 @@ def main():
             injections.print_table(rows)
             injections.print_summary(injections.summarize(rows))
         conn.close()
-
+    return code
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

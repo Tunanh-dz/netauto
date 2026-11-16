@@ -1,4 +1,8 @@
+import contextlib
+import io
+import os
 import sqlite3
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -167,6 +171,22 @@ class TestCheckClean(unittest.TestCase):
         w = World()
         self.assertEqual(injector.check_clean(w.conn, w.clock()), w.snap_id())
 
+class TestExitCodes(unittest.TestCase):
+    def run_main(self, argv):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return injector.main(argv)
+
+    def test_preview_exits_zero(self):
+        self.assertEqual(self.run_main(["--fault", "r1-subif-down"]), 0)
+
+    def test_refusal_exits_nonzero(self):
+        # DB trống: chưa có snapshot nào, tức monitor không chạy -> phải từ chối với mã 2
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.db")
+            code = self.run_main(["--fault", "r1-subif-down", "--runs", "1",
+                                  "--yes", "--db", path])
+        self.assertEqual(code, injector.EXIT_REFUSED)
+        self.assertEqual(injector.EXIT_REFUSED, 2)
 
 if __name__ == "__main__":
     unittest.main()
