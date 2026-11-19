@@ -1,7 +1,7 @@
 """Giám sát định kỳ: thu thập, kiểm tra intent, đo ping, quản lý sự cố, tính điểm."""
 import time
 from dataclasses import asdict
-from netauto import db, health, incidents, maintenance, perf, probe, runs, timefmt
+from netauto import db, health, incidents, maintenance, perf, probe, runs, timefmt, service
 from netauto.check import check_snapshot
 from netauto.collector import collect_all
 from netauto.diff import diff_snapshots
@@ -10,7 +10,13 @@ from netauto.intent import INTENT_PATH, ignore_interfaces, load_intent
 
 def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
                 intent_path: str = INTENT_PATH) -> None:
-    """Chạy `count` lần (0 = chạy mãi đến khi bấm Ctrl+C)."""
+    """Chạy `count` lần (0 = chạy mãi). Mỗi DB chỉ cho một monitor: có monitor khác
+    đang chạy thì ném service.AlreadyRunning ngay, chưa đụng đến lab."""
+    with service.InstanceLock(db_path):
+        _run_loop(interval, count, db_path, intent_path)
+
+
+def _run_loop(interval: int, count: int, db_path: str, intent_path: str) -> None:
     intent = load_intent(intent_path)
     ignore = ignore_interfaces(intent)       # cổng quản lý: không đưa vào so sánh
     probe.flows_from_intent(intent)          # báo lỗi sớm nếu mục probes sai
@@ -19,8 +25,10 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
     health.ensure_schema(conn)
     runs.ensure_schema(conn)
     maintenance.ensure_schema(conn)
+    service.ensure_schema(conn)
     prev = db.latest_snapshot(conn)
     run_id, gap = runs.start_run(conn, interval, prev["taken_at"] if prev else None)
+    service.beat(conn, run_id, runs.now(), interval)
     if prev:
         print(f"(so sánh với snapshot lưu trước đó, lúc {timefmt.full(prev['taken_at'])})")
     if gap:
@@ -40,6 +48,7 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
             data = asdict(collect_all())
             sid = db.save_snapshot(conn, data)
             at = data["taken_at"]
+            service.beat(conn, run_id, at, interval)
             reach = sum(1 for d in data["devices"] if d["reachable"])
             errs = sum(len(d["errors"]) for d in data["devices"])
 

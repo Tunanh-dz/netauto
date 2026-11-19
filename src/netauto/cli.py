@@ -1,9 +1,10 @@
 """Giao diện dòng lệnh: python3 -m netauto.cli {collect|diff|monitor|history}"""
 import argparse
 import json
+import sys
 from dataclasses import asdict
 
-from netauto import db, timefmt
+from netauto import db, runs, service, timefmt
 from netauto.collector import collect_all, save_snapshot
 from netauto.diff import diff_snapshots, load_snapshot
 from netauto.intent import ignore_interfaces, load_intent
@@ -66,7 +67,8 @@ def main():
     m.add_argument("--interval", type=int, default=10, help="giây nghỉ giữa hai lần")
     m.add_argument("--count", type=int, default=0, help="số lần chạy (0 = mãi mãi)")
     m.add_argument("--db", default=db.DB_PATH)
-
+    st = sub.add_parser("status", help="monitor còn chạy không (đọc heartbeat)")
+    st.add_argument("--db", default=db.DB_PATH)
     h = sub.add_parser("history", help="xem lịch sử snapshot và sự kiện")
     h.add_argument("--limit", type=int, default=10)
     h.add_argument("--db", default=db.DB_PATH)
@@ -84,7 +86,20 @@ def main():
         ign = ignore_interfaces(load_intent())
         print_diff(diff_snapshots(load_snapshot(args.old), load_snapshot(args.new), ign))
     elif args.cmd == "monitor":
-        run_monitor(args.interval, args.count, args.db)
+        try:
+            run_monitor(args.interval, args.count, args.db)
+        except service.AlreadyRunning as exc:
+            print(f"Từ chối: đã có monitor khác (PID {exc}) đang chạy trên {args.db}.\n"
+                  f"Xem: python3 -m netauto.cli status --db {args.db}", file=sys.stderr)
+            sys.exit(2)
+    elif args.cmd == "status":
+        conn = db.connect(args.db)
+        service.ensure_schema(conn)
+        runs.ensure_schema(conn)
+        st = service.status(conn)
+        conn.close()
+        print(service.describe(st))
+        sys.exit(service.EXIT_CODES[st["state"]])
     elif args.cmd == "history":
         print_history(args.db, args.limit)
 
