@@ -1,0 +1,17 @@
+[Unit]
+Description=Netauto monitor (giam sat mang LAN mo phong)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/netauto
+Environment=PYTHONPATH=%h/netauto/src
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m netauto.cli monitor --interval 5
+KillSignal=SIGINT
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2
+
+[Install]
+WantedBy=default.target
