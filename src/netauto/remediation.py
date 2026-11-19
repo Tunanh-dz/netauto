@@ -11,12 +11,13 @@ cần lab. Chỉ sửa sự cố GỐC thuộc danh sách REMEDIABLE, và chỉ 
 import argparse
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 
-from netauto import db, incidents, maintenance
+from netauto import db, incidents, maintenance, runs, service
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS remediations (
@@ -255,6 +256,73 @@ def execute(conn, decision, db_path: str, *, run=run_apply, now=maintenance.now,
     return next(r for r in list_history(conn) if r["id"] == rid)
 
 
+# ---------------------------------------------------------------- vòng lặp tự chạy (25C)
+LOOP_INTERVAL_S = 5
+
+
+def cycle(conn, db_path: str, *, run=run_apply, now=maintenance.now,
+          sleep=time.sleep, policy: Policy = POLICY):
+    """Một vòng: nhìn, quyết, sửa tối đa MỘT việc. Trả về (kết quả hoặc None, ghi chú hoặc None).
+
+    Chốt an toàn: monitor không còn sống thì KHÔNG sửa. Lúc đó danh sách sự cố mở có thể
+    đã cũ (không ai cập nhật), và sau khi apply sẽ không ai đóng sự cố để xác nhận."""
+    runs.ensure_schema(conn)             # DB mới chưa từng chạy monitor vẫn phải hỏi được
+    service.ensure_schema(conn)
+    at = now()
+    state = service.status(conn, at)["state"]
+    if state != "alive":
+        return None, f"Monitor không chạy (trạng thái: {state}) nên tạm dừng sửa."
+    history = list_history(conn)
+    frozen = frozen_nodes(maintenance.windows_at(conn, at))
+    decisions = decide(incidents.open_incidents(conn), history, at, policy, frozen)
+    fixes = [x for x in decisions if x.action == "fix"]
+    if not fixes:
+        return None, None
+    return execute(conn, fixes[0], db_path, run=run, now=now, sleep=sleep), None
+
+
+def _log(text: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True)
+
+
+def run_loop(db_path: str, interval: float = LOOP_INTERVAL_S, count: int = 0, *,
+             run=run_apply, sleep=time.sleep, should_stop=lambda: False) -> int:
+    """Chạy vô hạn (count = 0) hoặc đúng `count` vòng. Giữ khóa riêng của remediation.
+    Mỗi vòng mở kết nối mới; lỗi bất ngờ ở một vòng được ghi lại rồi đi tiếp, vì một
+    dịch vụ nền không được chết chỉ vì một lần hỏng."""
+    with service.InstanceLock(db_path, "remediation"):
+        conn = incidents.connect(db_path)
+        maintenance.ensure_schema(conn)
+        ensure_schema(conn)
+        service.ensure_schema(conn)
+        conn.close()
+        _log(f"Remediation tự chạy, chu kỳ {interval:g} giây (PID {os.getpid()}).")
+        last_note, n = None, 0
+        while not should_stop():
+            n += 1
+            try:
+                conn = incidents.connect(db_path)
+                try:
+                    res, note = cycle(conn, db_path, run=run, sleep=sleep)
+                finally:
+                    conn.close()
+                if note != last_note and note:
+                    _log(note)
+                last_note = note
+                if res:
+                    _log(f"#{res['incident_id']} ({res['node']}): "
+                         f"{OUTCOME_TEXT.get(res['outcome'], res['outcome'])}"
+                         + (f", kiểm toán #{res['audit_id']}" if res["audit_id"] else ""))
+            except Exception as e:          # noqa: BLE001 - dịch vụ nền phải sống tiếp
+                _log(f"Lỗi ở vòng {n}: {type(e).__name__}: {e}")
+            if count and n >= count:
+                break
+            if not should_stop():
+                sleep(interval)
+        _log("Remediation dừng.")
+    return 0
+
+
 # ---------------------------------------------------------------- dòng lệnh
 def print_history(conn, limit: int) -> None:
     rows = list_history(conn, limit)
@@ -270,14 +338,39 @@ def print_history(conn, limit: int) -> None:
               f"{(r['outcome'] or 'đang chạy'):<13}{code!s:<4}{audit:<10}")
 
 
+def _main_loop(args, run, sleep) -> int:
+    """Dừng mềm: SIGINT/SIGTERM chỉ đặt cờ, nên một lần sửa đang chạy được làm xong
+    (apply bị giết giữa chừng thì không còn cơ hội tự hoàn tác)."""
+    stop = []
+    old = {s: signal.signal(s, lambda *_: stop.append(1))
+           for s in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        return run_loop(args.db, args.interval, args.count, run=run, sleep=sleep,
+                        should_stop=lambda: bool(stop))
+    except service.AlreadyRunning as e:
+        print(f"Remediation khác đang chạy trên DB này (PID {e}). Không chạy hai bản.",
+              file=sys.stderr)
+        return 2
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
+
+
 def main(argv=None, *, run=run_apply, sleep=time.sleep) -> int:
     ap = argparse.ArgumentParser(prog="netauto.remediation")
     ap.add_argument("--db", default=db.DB_PATH)
     ap.add_argument("--reset-breaker", action="store_true", help="mở lại cầu chì đã ngắt")
     ap.add_argument("--yes", action="store_true", help="thật sự sửa (mặc định chỉ xem)")
+    ap.add_argument("--loop", action="store_true",
+                    help="chạy liên tục và tự sửa (không cần --yes); dừng bằng Ctrl+C")
+    ap.add_argument("--interval", type=float, default=LOOP_INTERVAL_S,
+                    help="giây nghỉ giữa hai vòng (với --loop)")
+    ap.add_argument("--count", type=int, default=0, help="số vòng tối đa (0 = mãi mãi)")
     ap.add_argument("--history", type=int, nargs="?", const=10, metavar="N",
                     help="xem N lần sửa gần nhất (mặc định 10)")
     args = ap.parse_args(argv)
+    if args.loop:
+        return _main_loop(args, run, sleep)
     conn = incidents.connect(args.db)
     maintenance.ensure_schema(conn)
     ensure_schema(conn)

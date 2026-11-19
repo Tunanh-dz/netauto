@@ -8,7 +8,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-from netauto import incidents, maintenance
+from netauto import incidents, maintenance, service
 from netauto import remediation as rem
 
 T0 = datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
@@ -423,6 +423,146 @@ class TestCliActing(unittest.TestCase):
         rc, text = self.main(["--yes"])
         self.assertEqual(self.calls, [])
         self.assertIn("NGẮT", text)
+
+
+class TestLoop(unittest.TestCase):
+    """25C: vòng lặp tự sửa. Chạy trên DB tạm, apply giả, đồng hồ thật."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, "t.db")
+        conn = incidents.connect(self.path)
+        opened = (datetime.now().astimezone() - timedelta(seconds=60)).isoformat(timespec="seconds")
+        conn.execute(
+            "INSERT INTO incidents (id, node, check_code, severity, kind, message, opened_at, "
+            "opened_snapshot) VALUES (1, 'r1', 'router.subinterface', 'critical', 'down', 'm', "
+            "?, 1)", (opened,))
+        conn.commit()
+        conn.close()
+        self.calls = []
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def beat(self, seconds_ago=0, interval=5):
+        conn = sqlite3.connect(self.path)
+        service.ensure_schema(conn)
+        at = (datetime.now().astimezone() - timedelta(seconds=seconds_ago)).isoformat(timespec="seconds")
+        service.beat(conn, 1, at, interval)
+        conn.close()
+
+    def close_incident(self, _s=0):
+        c = sqlite3.connect(self.path)
+        c.execute("UPDATE incidents SET closed_at = '2026-01-01T00:00:00+00:00' WHERE id = 1")
+        c.commit()
+        c.close()
+
+    def run_fake(self, code=0):
+        def run(node, db):
+            self.calls.append(node)
+            return code, "Nhật ký kiểm toán: #7 (X)"
+        return run
+
+    def cycle(self, **kw):
+        conn = incidents.connect(self.path)
+        maintenance.ensure_schema(conn)
+        rem.ensure_schema(conn)
+        try:
+            return rem.cycle(conn, self.path, run=kw.get("run", self.run_fake()),
+                             sleep=self.close_incident)
+        finally:
+            conn.close()
+
+    def loop(self, count=3, should_stop=lambda: False, run=None):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = rem.run_loop(self.path, interval=5, count=count,
+                              run=run or self.run_fake(), sleep=self.close_incident,
+                              should_stop=should_stop)
+        return rc, buf.getvalue()
+
+    # --- một vòng
+    def test_cycle_fixes_when_monitor_alive(self):
+        self.beat()
+        res, note = self.cycle()
+        self.assertEqual(res["outcome"], "fixed")
+        self.assertEqual(self.calls, ["r1"])
+
+    def test_cycle_does_nothing_without_a_heartbeat(self):
+        res, note = self.cycle()
+        self.assertIsNone(res)
+        self.assertEqual(self.calls, [])
+        self.assertIn("monitor", note.lower())
+
+    def test_cycle_does_nothing_when_monitor_is_dead(self):
+        self.beat(seconds_ago=300)             # im lặng quá ngưỡng 30 giây
+        res, note = self.cycle()
+        self.assertEqual((res, self.calls), (None, []))
+        self.assertIn("monitor", note.lower())
+
+    def test_cycle_idle_when_nothing_open(self):
+        self.beat()
+        self.close_incident()
+        res, note = self.cycle()
+        self.assertEqual((res, note, self.calls), (None, None, []))
+
+    # --- cả vòng lặp
+    def test_loop_fixes_once_then_idles(self):
+        self.beat()
+        rc, text = self.loop(count=3)
+        self.assertEqual((rc, self.calls), (0, ["r1"]))
+        self.assertIn("ĐÃ SỬA", text)
+
+    def test_loop_stops_when_asked_even_without_count(self):
+        self.beat()
+        seen = []
+        def stop():
+            seen.append(1)
+            return len(seen) > 2
+        rc, _ = self.loop(count=0, should_stop=stop)
+        self.assertEqual(rc, 0)
+        self.assertLessEqual(len(seen), 4)
+
+    def test_loop_survives_an_exception_in_a_cycle(self):
+        self.beat()
+        def boom(node, db):
+            self.calls.append(node)
+            raise RuntimeError("hỏng bất ngờ")
+        rc, text = self.loop(count=3, run=boom)
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.calls, ["r1"])       # các vòng sau bị giãn cách chặn
+        self.assertIn("hỏng bất ngờ", text)
+
+    def test_loop_does_not_repeat_the_same_warning(self):
+        text = self.loop(count=4)[1]
+        self.assertEqual(text.lower().count("monitor"), 1)
+
+    def test_loop_refuses_second_instance(self):
+        with service.InstanceLock(self.path, "remediation"):
+            with self.assertRaises(service.AlreadyRunning):
+                self.loop(count=1)
+
+    def test_loop_does_not_clash_with_the_monitor_lock(self):
+        self.beat()
+        with service.InstanceLock(self.path):
+            rc, _ = self.loop(count=1)
+        self.assertEqual(rc, 0)
+
+    def test_cli_loop_flag(self):
+        self.beat()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = rem.main(["--db", self.path, "--loop", "--count", "2", "--interval", "1"],
+                          run=self.run_fake(), sleep=self.close_incident)
+        self.assertEqual((rc, self.calls), (0, ["r1"]))
+
+    def test_cli_loop_refused_exit_2(self):
+        err = io.StringIO()
+        with service.InstanceLock(self.path, "remediation"):
+            with contextlib.redirect_stderr(err):
+                rc = rem.main(["--db", self.path, "--loop", "--count", "1"])
+        self.assertEqual(rc, 2)
+        self.assertIn(str(os.getpid()), err.getvalue())
 
 
 if __name__ == "__main__":

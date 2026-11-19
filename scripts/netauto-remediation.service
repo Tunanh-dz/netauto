@@ -1,0 +1,19 @@
+[Unit]
+Description=Netauto remediation (tu sua loi mang don gian)
+After=netauto-monitor.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/netauto
+Environment=PYTHONPATH=%h/netauto/src
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m netauto.remediation --loop --interval 5
+# Dung mem: SIGINT chi dat co, lan sua dang chay (apply + cho dong su co, toi da ~3 phut) duoc lam xong
+KillSignal=SIGINT
+TimeoutStopSec=240
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2
+
+[Install]
+WantedBy=default.target

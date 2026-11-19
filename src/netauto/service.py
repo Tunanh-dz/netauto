@@ -34,8 +34,11 @@ class AlreadyRunning(Exception):
 
 
 class InstanceLock:
-    def __init__(self, db_path: str):
-        self.path = None if db_path == ":memory:" else db_path + ".lock"
+    """Mỗi vai trò (monitor, remediation) có khóa riêng, nên chạy song song không vướng nhau,
+    nhưng không vai nào chạy được hai bản. Tên mặc định giữ nguyên file `<db>.lock` cũ."""
+    def __init__(self, db_path: str, name: str = ""):
+        suffix = f".{name}.lock" if name else ".lock"
+        self.path = None if db_path == ":memory:" else db_path + suffix
         self.fd = None
 
     def acquire(self) -> None:

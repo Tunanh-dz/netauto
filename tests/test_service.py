@@ -116,6 +116,19 @@ class TestInstanceLock(unittest.TestCase):
             with service.InstanceLock(self.db + "2"):
                 pass
 
+    def test_default_lock_file_keeps_its_old_name(self):
+        self.assertEqual(service.InstanceLock(self.db).path, self.db + ".lock")
+
+    def test_named_locks_are_independent(self):
+        with service.InstanceLock(self.db):
+            with service.InstanceLock(self.db, "remediation"):
+                pass
+
+    def test_same_name_is_refused(self):
+        with service.InstanceLock(self.db, "remediation"):
+            with self.assertRaises(service.AlreadyRunning):
+                service.InstanceLock(self.db, "remediation").acquire()
+
     def test_monitor_refuses_before_touching_the_lab(self):
         with service.InstanceLock(self.db):
             with self.assertRaises(service.AlreadyRunning):
