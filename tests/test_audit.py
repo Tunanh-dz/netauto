@@ -1,5 +1,7 @@
 import json
+import os
 import unittest
+from unittest import mock
 
 from netauto import audit
 from netauto.intent import INTENT_PATH
@@ -49,6 +51,18 @@ class TestAudit(unittest.TestCase):
     def test_unwritable_location_fails_before_any_change(self):
         with self.assertRaises(OSError):
             audit.connect("/proc/netauto-khong-ghi-duoc/audit.db")
+
+
+    def test_actor_comes_from_environment_when_set(self):
+        with mock.patch.dict(os.environ, {"NETAUTO_ACTOR": "netauto-remediation"}):
+            e = audit.new_entry(INTENT_PATH, None, False, "THÀNH CÔNG", 0, 1.0, {})
+        self.assertEqual(e["actor"], "netauto-remediation")
+
+    def test_actor_defaults_to_the_login_user(self):
+        env = {k: v for k, v in os.environ.items() if k != "NETAUTO_ACTOR"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch("getpass.getuser", return_value="tuananh"):
+            self.assertEqual(audit.actor(), "tuananh")
 
 
 if __name__ == "__main__":

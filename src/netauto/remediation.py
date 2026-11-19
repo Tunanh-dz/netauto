@@ -9,6 +9,11 @@ cần lab. Chỉ sửa sự cố GỐC thuộc danh sách REMEDIABLE, và chỉ 
 đang chạy). Mỗi lần chỉ sửa MỘT việc.
 """
 import argparse
+import os
+import re
+import subprocess
+import sys
+import time
 from dataclasses import dataclass
 
 from netauto import db, incidents, maintenance
@@ -23,9 +28,11 @@ CREATE TABLE IF NOT EXISTS remediations (
     finished_at TEXT,                  -- NULL = đang chạy (hoặc bị ngắt giữa chừng)
     outcome     TEXT,                  -- fixed | ineffective | failed | rolled_back | refused | reset
     exit_code   INTEGER,
-    detail      TEXT    NOT NULL DEFAULT ''
+    detail      TEXT    NOT NULL DEFAULT '',
+    audit_id    INTEGER                -- bản ghi nhật ký kiểm toán của lần apply
 );
 """
+NEW_COLUMNS = {"audit_id": "INTEGER"}      # CSDL cũ được nâng cấp tại chỗ
 
 # Chỉ những lỗi đã được kiểm chứng là `plan` thấy và `apply` sửa được (TN18, Ngày 25).
 # Mở rộng từng bước, mỗi bước đo trước. "wrong" cố ý KHÔNG có: sửa sai địa chỉ cần gỡ
@@ -36,6 +43,20 @@ REMEDIABLE = frozenset({
 })
 FAILURES = frozenset({"failed", "rolled_back", "refused", "ineffective"})
 STALE_RUNNING_S = 300      # lần sửa "đang chạy" quá 5 phút coi như đã chết, không chặn mãi
+ACTOR = "netauto-remediation"   # ghi vào nhật ký kiểm toán: phân biệt máy sửa với người sửa
+APPLY_TIMEOUT_S = 300      # apply tối đa 5 phút (bình thường 30–60 giây)
+WAIT_CLOSED_S = 45         # sau khi apply xong, đợi monitor đóng sự cố tối đa chừng này
+POLL_S = 2
+OUTPUT_TAIL = 600          # chỉ lưu phần cuối đầu ra của apply
+
+OUTCOME_BY_CODE = {1: "failed", 2: "failed", 3: "refused", 4: "rolled_back", 5: "refused"}
+OUTCOME_TEXT = {
+    "fixed": "ĐÃ SỬA: sự cố đã đóng",
+    "ineffective": "KHÔNG HIỆU QUẢ: apply thành công nhưng sự cố vẫn mở",
+    "failed": "THẤT BẠI",
+    "rolled_back": "ĐÃ HOÀN TÁC: apply thấy mạng xấu đi",
+    "refused": "TỪ CHỐI: apply không cho chạy",
+}
 
 
 @dataclass(frozen=True)
@@ -138,8 +159,25 @@ def decide(open_rows, history, now: str, policy: Policy = POLICY,
 
 
 # ---------------------------------------------------------------- cơ sở dữ liệu
+def outcome_of(exit_code, closed: bool) -> str:
+    """Hàm thuần: mã thoát của apply (và sự cố đã đóng chưa) -> kết quả của lần sửa."""
+    if exit_code == 0:
+        return "fixed" if closed else "ineffective"
+    return OUTCOME_BY_CODE.get(exit_code, "failed")
+
+
+def parse_audit_id(text: str):
+    found = re.findall(r"Nhật ký kiểm toán: #(\d+)", text or "")
+    return int(found[-1]) if found else None
+
+
 def ensure_schema(conn) -> None:
     conn.executescript(SCHEMA)
+    have = {r[1] for r in conn.execute("PRAGMA table_info(remediations)")}
+    for col, decl in NEW_COLUMNS.items():
+        if col not in have:
+            conn.execute(f"ALTER TABLE remediations ADD COLUMN {col} {decl}")
+    conn.commit()
 
 
 def start(conn, incident_id: int, node: str, check_code: str, at: str) -> int:
@@ -149,17 +187,19 @@ def start(conn, incident_id: int, node: str, check_code: str, at: str) -> int:
     return cur.lastrowid
 
 
-def finish(conn, rid: int, at: str, outcome: str, exit_code, detail: str = "") -> None:
+def finish(conn, rid: int, at: str, outcome: str, exit_code, detail: str = "",
+           audit_id=None) -> None:
     conn.execute("UPDATE remediations SET finished_at = ?, outcome = ?, exit_code = ?, "
-                 "detail = ? WHERE id = ?", (at, outcome, exit_code, detail, rid))
+                 "detail = ?, audit_id = ? WHERE id = ?",
+                 (at, outcome, exit_code, detail, audit_id, rid))
     conn.commit()
 
 
 def list_history(conn, limit: int = 200) -> list[dict]:
     cols = ("id", "incident_id", "node", "check_code", "started_at", "finished_at",
-            "outcome", "exit_code", "detail")
+            "outcome", "exit_code", "detail", "audit_id")
     rows = conn.execute("SELECT id, incident_id, node, check_code, started_at, finished_at, "
-                        "outcome, exit_code, detail FROM remediations "
+                        "outcome, exit_code, detail, audit_id FROM remediations "
                         "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     return [dict(zip(cols, r)) for r in reversed(rows)]
 
@@ -170,11 +210,73 @@ def reset_breaker(conn, at: str) -> int:
     return rid
 
 
+# ---------------------------------------------------------------- thực thi
+def run_apply(node: str, db_path: str, timeout_s: float = APPLY_TIMEOUT_S):
+    """Chạy `apply --node X --yes` như một tiến trình riêng, nên được hưởng đủ cơ chế an
+    toàn của apply: kiểm chứng, tự hoàn tác, nhật ký kiểm toán, cửa sổ bảo trì.
+    Trả về (mã thoát, đầu ra)."""
+    env = dict(os.environ, **{"NETAUTO_ACTOR": ACTOR})
+    cp = subprocess.run(
+        [sys.executable, "-m", "netauto.apply", "--node", node, "--yes", "--db", db_path],
+        capture_output=True, text=True, timeout=timeout_s, env=env)
+    return cp.returncode, cp.stdout + cp.stderr
+
+
+def incident_closed(conn, incident_id: int) -> bool:
+    row = conn.execute("SELECT closed_at FROM incidents WHERE id = ?", (incident_id,)).fetchone()
+    return bool(row and row[0])
+
+
+def execute(conn, decision, db_path: str, *, run=run_apply, now=maintenance.now,
+            sleep=time.sleep, wait_s: float = WAIT_CLOSED_S, poll_s: float = POLL_S) -> dict:
+    """Thực hiện MỘT quyết định "fix". Ghi bản ghi TRƯỚC khi hành động (ghi trước, làm sau),
+    và luôn ghi kết quả dù apply lỗi, quá giờ hay bị ngắt (finally)."""
+    rid = start(conn, decision.incident_id, decision.node, decision.check_code, now())
+    code, text, outcome = None, "", "failed"
+    try:
+        try:
+            code, text = run(decision.node, db_path)
+        except subprocess.TimeoutExpired:
+            text = "apply chạy quá lâu nên đã bị dừng (có thể còn dở dang)"
+        closed = False
+        if code == 0:                    # chỉ chờ monitor đóng sự cố khi apply báo thành công
+            t0 = now()
+            while True:
+                closed = incident_closed(conn, decision.incident_id)
+                if closed or incidents.duration_s(t0, now()) >= wait_s:
+                    break
+                sleep(poll_s)
+        outcome = outcome_of(code, closed)
+    except BaseException:
+        text = (text or "") + " (bị ngắt giữa chừng)"
+        raise
+    finally:
+        finish(conn, rid, now(), outcome, code, text[-OUTPUT_TAIL:], parse_audit_id(text))
+    return next(r for r in list_history(conn) if r["id"] == rid)
+
+
 # ---------------------------------------------------------------- dòng lệnh
-def main(argv=None) -> int:
+def print_history(conn, limit: int) -> None:
+    rows = list_history(conn, limit)
+    if not rows:
+        print("(chưa có lần sửa nào)")
+        return
+    print(f"{'ID':<5}{'LÚC':<9}{'SỰ CỐ':<8}{'THIẾT BỊ':<10}{'KẾT QUẢ':<13}{'MÃ':<4}{'KIỂM TOÁN':<10}")
+    for r in rows:
+        at = r["started_at"][11:19]
+        audit = f"#{r['audit_id']}" if r["audit_id"] else "-"
+        code = "-" if r["exit_code"] is None else r["exit_code"]
+        print(f"{r['id']:<5}{at:<9}#{r['incident_id']:<7}{r['node']:<10}"
+              f"{(r['outcome'] or 'đang chạy'):<13}{code!s:<4}{audit:<10}")
+
+
+def main(argv=None, *, run=run_apply, sleep=time.sleep) -> int:
     ap = argparse.ArgumentParser(prog="netauto.remediation")
     ap.add_argument("--db", default=db.DB_PATH)
     ap.add_argument("--reset-breaker", action="store_true", help="mở lại cầu chì đã ngắt")
+    ap.add_argument("--yes", action="store_true", help="thật sự sửa (mặc định chỉ xem)")
+    ap.add_argument("--history", type=int, nargs="?", const=10, metavar="N",
+                    help="xem N lần sửa gần nhất (mặc định 10)")
     args = ap.parse_args(argv)
     conn = incidents.connect(args.db)
     maintenance.ensure_schema(conn)
@@ -182,6 +284,10 @@ def main(argv=None) -> int:
     at = maintenance.now()
     if args.reset_breaker:
         print(f"Đã mở lại cầu chì (bản ghi #{reset_breaker(conn, at)}).")
+        conn.close()
+        return 0
+    if args.history is not None:
+        print_history(conn, args.history)
         conn.close()
         return 0
     p = POLICY
@@ -197,9 +303,26 @@ def main(argv=None) -> int:
     for x in decisions:
         mark = "SẼ SỬA " if x.action == "fix" else "bỏ qua "
         print(f"  #{x.incident_id:<5} {x.node:<8} {x.check_code:<20} {mark} {x.why}")
-    print("\n(Chế độ xem: chưa sửa gì. Bước 25B sẽ thêm --yes để sửa thật.)")
+    fixes = [x for x in decisions if x.action == "fix"]
+    code = 0
+    if not args.yes:
+        print("\n(Chế độ xem: chưa sửa gì. Thêm --yes để sửa thật.)")
+    elif not fixes:
+        print("\nKhông có gì cần sửa lúc này.")
+    else:
+        x = fixes[0]
+        print(f"\nĐANG SỬA #{x.incident_id} ({x.node}, {x.check_code}): "
+              f"chạy apply --node {x.node} --yes ...")
+        res = execute(conn, x, args.db, run=run, sleep=sleep)
+        print(f"Kết quả: {OUTCOME_TEXT.get(res['outcome'], res['outcome'])}")
+        print(f"  apply mã {res['exit_code']}"
+              + (f", nhật ký kiểm toán #{res['audit_id']}" if res["audit_id"] else ""))
+        if res["outcome"] != "fixed":
+            for line in res["detail"].strip().splitlines()[-4:]:
+                print(f"  | {line}")
+            code = 1
     conn.close()
-    return 0
+    return code
 
 
 if __name__ == "__main__":

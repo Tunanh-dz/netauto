@@ -6,6 +6,7 @@ import argparse
 import getpass
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 from datetime import datetime
@@ -14,6 +15,7 @@ from pathlib import Path
 from netauto import timefmt
 
 DB_PATH = "data/netauto.db"
+ACTOR_ENV = "NETAUTO_ACTOR"      # công cụ tự động đặt biến này để nhật ký ghi đúng "ai" làm
 GENESIS = "0" * 64
 FIELDS = ("at", "actor", "intent_path", "intent_sha", "nodes", "prune",
           "result", "exit_code", "duration_s", "detail")
@@ -37,6 +39,11 @@ CREATE TABLE IF NOT EXISTS audit (
 """
 
 
+def actor() -> str:
+    """Người (hoặc công cụ) thực hiện: biến NETAUTO_ACTOR nếu có, không thì tên người dùng."""
+    return os.environ.get(ACTOR_ENV) or getpass.getuser()
+
+
 def connect(path: str = DB_PATH) -> sqlite3.Connection:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -58,7 +65,7 @@ def new_entry(intent_path, nodes, prune, result, exit_code, duration_s, detail: 
         sha = "không rõ"
     return {
         "at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "actor": getpass.getuser(),
+        "actor": actor(),
         "intent_path": str(intent_path),
         "intent_sha": sha,
         "nodes": ",".join(sorted(nodes)) if nodes else "tất cả",

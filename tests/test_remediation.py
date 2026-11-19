@@ -2,9 +2,11 @@ import contextlib
 import io
 import os
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 from netauto import incidents, maintenance
 from netauto import remediation as rem
@@ -159,6 +161,7 @@ class TestFrozenNodes(unittest.TestCase):
 class TestStore(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
+        self.addCleanup(self.conn.close)
         rem.ensure_schema(self.conn)
 
     def test_start_then_finish(self):
@@ -202,6 +205,224 @@ class TestCli(unittest.TestCase):
             n = conn.execute("SELECT COUNT(*) FROM remediations WHERE outcome='reset'").fetchone()[0]
             conn.close()
         self.assertEqual(n, 1)
+
+
+class Clock:
+    """Đồng hồ giả chạy theo sleep()."""
+    def __init__(self):
+        self.t = T0
+
+    def now(self):
+        return self.t.isoformat(timespec="seconds")
+
+    def sleep(self, s):
+        self.t += timedelta(seconds=s)
+
+
+class TestOutcome(unittest.TestCase):
+    def test_exit_code_mapping(self):
+        cases = [((0, True), "fixed"), ((0, False), "ineffective"), ((1, False), "failed"),
+                 ((2, False), "failed"), ((3, False), "refused"), ((4, False), "rolled_back"),
+                 ((5, False), "refused"), ((None, False), "failed"), ((99, True), "failed")]
+        for args, want in cases:
+            self.assertEqual(rem.outcome_of(*args), want, args)
+
+    def test_nonzero_exit_is_never_fixed_even_if_incident_closed(self):
+        self.assertNotEqual(rem.outcome_of(4, True), "fixed")
+
+    def test_parse_audit_id(self):
+        self.assertEqual(rem.parse_audit_id("x\nNhật ký kiểm toán: #7 (THÀNH CÔNG)\n"), 7)
+        self.assertEqual(rem.parse_audit_id("Nhật ký kiểm toán: #7\nNhật ký kiểm toán: #9"), 9)
+        self.assertIsNone(rem.parse_audit_id("không có"))
+        self.assertIsNone(rem.parse_audit_id(None))
+
+
+DECISION = rem.Decision(1, "r1", "router.subinterface", "fix", "x")
+
+
+class TestExecute(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.addCleanup(self.conn.close)
+        incidents.ensure_schema(self.conn)
+        rem.ensure_schema(self.conn)
+        self.conn.execute(
+            "INSERT INTO incidents (id, node, check_code, severity, kind, message, opened_at, "
+            "opened_snapshot) VALUES (1, 'r1', 'router.subinterface', 'critical', 'down', 'm', "
+            "?, 1)", (ts(0),))
+        self.conn.commit()
+        self.clock = Clock()
+
+    def close_incident(self):
+        self.conn.execute("UPDATE incidents SET closed_at = ? WHERE id = 1", (self.clock.now(),))
+        self.conn.commit()
+
+    def go(self, run, sleep=None, **kw):
+        return rem.execute(self.conn, DECISION, "x.db", run=run, now=self.clock.now,
+                           sleep=sleep or self.clock.sleep, **kw)
+
+    def test_fixed_when_apply_ok_and_incident_closes(self):
+        def sleep(s):
+            self.clock.sleep(s)
+            self.close_incident()
+        r = self.go(lambda n, d: (0, "...\nNhật ký kiểm toán: #7 (THÀNH CÔNG)"), sleep)
+        self.assertEqual((r["outcome"], r["exit_code"], r["audit_id"]), ("fixed", 0, 7))
+        self.assertIsNotNone(r["finished_at"])
+
+    def test_record_is_written_before_acting(self):
+        seen = []
+
+        def run(node, db):
+            seen.append([h["outcome"] for h in rem.list_history(self.conn)])
+            return 1, "lỗi"
+        self.go(run)
+        self.assertEqual(seen, [[None]])          # lúc apply chạy, bản ghi đã có và chưa xong
+
+    def test_ineffective_when_incident_stays_open(self):
+        r = self.go(lambda n, d: (0, "ok"), wait_s=10, poll_s=2)
+        self.assertEqual(r["outcome"], "ineffective")
+        self.assertGreaterEqual((self.clock.t - T0).total_seconds(), 10)
+
+    def test_failed_apply_does_not_wait_for_incident(self):
+        def sleep(s):
+            raise AssertionError("không được chờ khi apply thất bại")
+        for code, want in ((1, "failed"), (3, "refused"), (4, "rolled_back"), (5, "refused")):
+            r = self.go(lambda n, d, c=code: (c, "x"), sleep)
+            self.assertEqual(r["outcome"], want)
+
+    def test_timeout_is_recorded_as_failed(self):
+        def run(node, db):
+            raise subprocess.TimeoutExpired("apply", 300)
+        r = self.go(run)
+        self.assertEqual(r["outcome"], "failed")
+        self.assertIsNone(r["exit_code"])
+        self.assertIn("quá lâu", r["detail"])
+        self.assertIsNotNone(r["finished_at"])
+
+    def test_interrupt_is_recorded_then_reraised(self):
+        def run(node, db):
+            raise KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            self.go(run)
+        row = rem.list_history(self.conn)[0]
+        self.assertEqual(row["outcome"], "failed")      # không để lại dòng "đang chạy" mồ côi
+        self.assertIsNotNone(row["finished_at"])
+
+    def test_run_receives_node_and_db(self):
+        got = []
+        self.go(lambda n, d: (got.append((n, d)) or (1, "")))
+        self.assertEqual(got, [("r1", "x.db")])
+
+
+class TestRunApply(unittest.TestCase):
+    def test_command_environment_and_output(self):
+        cp = subprocess.CompletedProcess([], 4, stdout="out", stderr="err")
+        with mock.patch("subprocess.run", return_value=cp) as m:
+            code, text = rem.run_apply("r2", "d.db", 77)
+        argv = m.call_args.args[0]
+        self.assertEqual(argv[1:], ["-m", "netauto.apply", "--node", "r2", "--yes", "--db", "d.db"])
+        self.assertEqual(m.call_args.kwargs["timeout"], 77)
+        self.assertEqual(m.call_args.kwargs["env"]["NETAUTO_ACTOR"], rem.ACTOR)
+        self.assertEqual((code, text), (4, "outerr"))
+
+    def test_apply_never_gets_prune(self):
+        with mock.patch("subprocess.run",
+                        return_value=subprocess.CompletedProcess([], 0, "", "")) as m:
+            rem.run_apply("r1", "d.db")
+        self.assertNotIn("--prune", m.call_args.args[0])
+
+
+class TestMigration(unittest.TestCase):
+    def test_old_table_gets_audit_id(self):
+        conn = sqlite3.connect(":memory:")
+        self.addCleanup(conn.close)
+        conn.execute("CREATE TABLE remediations (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                     "incident_id INTEGER NOT NULL, node TEXT NOT NULL, check_code TEXT NOT NULL, "
+                     "started_at TEXT NOT NULL, finished_at TEXT, outcome TEXT, exit_code INTEGER, "
+                     "detail TEXT NOT NULL DEFAULT '')")
+        conn.execute("INSERT INTO remediations (incident_id, node, check_code, started_at) "
+                     "VALUES (1, 'r1', 'x', 't')")
+        rem.ensure_schema(conn)
+        self.assertIsNone(rem.list_history(conn)[0]["audit_id"])
+
+
+class TestCliActing(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, "t.db")
+        conn = incidents.connect(self.path)
+        opened = (datetime.now().astimezone() - timedelta(seconds=60)).isoformat(timespec="seconds")
+        conn.execute(
+            "INSERT INTO incidents (id, node, check_code, severity, kind, message, opened_at, "
+            "opened_snapshot) VALUES (1, 'r1', 'router.subinterface', 'critical', 'down', 'm', "
+            "?, 1)", (opened,))
+        conn.commit()
+        conn.close()
+        self.calls = []
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def set_closed(self, value):
+        c = sqlite3.connect(self.path)
+        c.execute("UPDATE incidents SET closed_at = ? WHERE id = 1", (value,))
+        c.commit()
+        c.close()
+
+    def close_incident(self, _s):
+        self.set_closed("2026-01-01T00:00:00+00:00")
+
+    def main(self, argv, code=0):
+        def run(node, db):
+            self.calls.append(node)
+            return code, "Nhật ký kiểm toán: #3 (X)"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = rem.main(["--db", self.path, *argv], run=run, sleep=self.close_incident)
+        return rc, buf.getvalue()
+
+    def test_preview_does_not_act(self):
+        rc, text = self.main([])
+        self.assertEqual((rc, self.calls), (0, []))
+        self.assertIn("SẼ SỬA", text)
+
+    def test_yes_acts_once_and_reports(self):
+        rc, text = self.main(["--yes"])
+        self.assertEqual((rc, self.calls), (0, ["r1"]))
+        self.assertIn("ĐÃ SỬA", text)
+        self.assertIn("#3", text)
+
+    def test_second_run_is_held_back_by_policy(self):
+        self.main(["--yes"])
+        self.set_closed(None)                          # lỗi tái phát ngay
+        rc, text = self.main(["--yes"])
+        self.assertEqual(self.calls, ["r1"])           # chưa gọi lần hai
+        self.assertIn("giãn cách", text)
+
+    def test_failed_apply_returns_nonzero(self):
+        rc, text = self.main(["--yes"], code=4)
+        self.assertEqual(rc, 1)
+        self.assertIn("HOÀN TÁC", text)
+
+    def test_history_lists_attempts(self):
+        self.main(["--yes"])
+        rc, text = self.main(["--history"])
+        self.assertEqual(rc, 0)
+        self.assertIn("fixed", text)
+        self.assertIn("#3", text)
+
+    def test_breaker_blocks_acting(self):
+        conn = sqlite3.connect(self.path)
+        rem.ensure_schema(conn)
+        now = datetime.now().astimezone()
+        for i in range(3):
+            rid = rem.start(conn, 90 + i, "r2", "router.uplink",
+                            (now - timedelta(seconds=100 + i)).isoformat(timespec="seconds"))
+            rem.finish(conn, rid, now.isoformat(timespec="seconds"), "failed", 1)
+        conn.close()
+        rc, text = self.main(["--yes"])
+        self.assertEqual(self.calls, [])
+        self.assertIn("NGẮT", text)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,6 @@ Mã thoát: 0 = xong hoặc không có gì, 1 = có bước lỗi / còn lệch 
 """
 import argparse
 import atexit
-import getpass
 import shlex
 import sys
 import time
@@ -145,7 +144,7 @@ def open_maintenance(db_path, nodes, ttl_s):
     try:
         conn = db.connect(db_path)
         maintenance.ensure_schema(conn)
-        wid = maintenance.open_window(conn, getpass.getuser(), "netauto.apply --yes",
+        wid = maintenance.open_window(conn, audit.actor(), "netauto.apply --yes",
                                       set(nodes), ttl_s)
         conn.close()
     except Exception as exc:
