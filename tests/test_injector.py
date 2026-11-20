@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from netauto import db, incidents, injections, injector, maintenance
+from netauto import db, incidents, injections, injector, maintenance, service
 from netauto.transport import Result
 
 FAULT = injections.FAULTS["r1-subif-down"]
@@ -170,6 +170,109 @@ class TestCheckClean(unittest.TestCase):
     def test_clean_returns_snapshot_id(self):
         w = World()
         self.assertEqual(injector.check_clean(w.conn, w.clock()), w.snap_id())
+
+class TestRemediateMode(unittest.TestCase):
+    """25C-2: giữ lỗi, để remediation tự sửa, đo đến lúc sự cố đóng."""
+
+    def monitor_that_fixes(self, w, detect_tick=12, fix_tick=40, with_window=False):
+        state = {"ticks": 0}
+
+        def tick(w):
+            state["ticks"] += 1
+            if state["ticks"] == detect_tick:
+                w.open_incident()
+            if state["ticks"] == fix_tick:            # remediation sửa: KHÔNG qua lệnh khôi phục
+                w.close_all()
+                state["fixed_at"] = w.t
+                if with_window:                       # apply mở cửa sổ bảo trì rồi đóng ngay
+                    i = maintenance.open_window(w.conn, "netauto-remediation", "auto",
+                                                maintenance.ALL, 10, at=w.clock())
+                    maintenance.close_window(w.conn, i, at=w.clock())
+        w.on_tick = tick
+        return state
+
+    def test_fixed_by_someone_else_is_not_restored_by_injector(self):
+        w = World()
+        self.monitor_that_fixes(w)
+        r = w.go(remediate=True)
+        self.assertEqual(r["status"], "detected")
+        self.assertEqual([c[1] for c in w.cmds], [FAULT.inject])     # không gọi restore
+        self.assertIsNone(r["restored_at"])
+        self.assertIsNotNone(r["closed_at"])
+        self.assertAlmostEqual(r["fix_seconds"], 20.0, delta=1.5)    # 40 nhịp × 0,5 giây
+
+    def test_not_fixed_in_time_injector_rescues_and_says_so(self):
+        w = World()
+        state = {"ticks": 0}
+
+        def tick(w):
+            state["ticks"] += 1
+            if state["ticks"] == 4:
+                w.open_incident()
+            if FAULT.restore in [c[1] for c in w.cmds]:
+                w.close_all()
+        w.on_tick = tick
+        r = w.go(remediate=True, fix_timeout=20)
+        self.assertEqual(r["status"], "detected")
+        self.assertEqual([c[1] for c in w.cmds], [FAULT.inject, FAULT.restore])
+        self.assertIsNotNone(r["restored_at"])                       # người cứu, không phải máy
+        self.assertIsNone(r["closed_at"])
+        self.assertIsNone(r["fix_seconds"])
+
+    def test_waits_for_the_maintenance_grace_before_returning(self):
+        w = World()
+        state = self.monitor_that_fixes(w, with_window=True)
+        w.go(remediate=True, recover_timeout=120)
+        self.assertGreaterEqual((w.t - state["fixed_at"]).total_seconds(),
+                                maintenance.GRACE_S - 1)
+
+    def test_missed_in_remediate_mode_still_restores(self):
+        w = World()
+        w.on_tick = lambda w: w.close_all()
+        r = w.go(remediate=True, detect_timeout=10)
+        self.assertEqual(r["status"], "missed")
+        self.assertEqual([c[1] for c in w.cmds], [FAULT.inject, FAULT.restore])
+
+    def test_interrupt_while_waiting_for_fix_restores(self):
+        w = World()
+        state = {"ticks": 0}
+
+        def tick(w):
+            state["ticks"] += 1
+            if state["ticks"] == 4:
+                w.open_incident()
+            if state["ticks"] == 10:
+                raise KeyboardInterrupt
+        w.on_tick = tick
+        with self.assertRaises(KeyboardInterrupt):
+            w.go(remediate=True)
+        self.assertEqual([c[1] for c in w.cmds], [FAULT.inject, FAULT.restore])
+
+    def test_refuses_when_remediation_is_not_running(self):
+        w = World()
+        with self.assertRaises(injector.NotClean) as cm:
+            w.go(remediate=True, remediation_alive=lambda: False)
+        self.assertIn("remediation", str(cm.exception).lower())
+        self.assertEqual(w.cmds, [])                                  # chưa gây lỗi gì
+
+    def test_remediation_running_sees_the_lock(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.db")
+            self.assertFalse(injector.remediation_running(path))
+            with service.InstanceLock(path, "remediation"):
+                self.assertTrue(injector.remediation_running(path))
+            self.assertFalse(injector.remediation_running(path))
+
+    def test_cli_remediate_refused_without_remediation(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.db")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = injector.main(["--fault", "r1-subif-down", "--runs", "1", "--yes",
+                                      "--remediate", "--db", path])
+        self.assertEqual(code, injector.EXIT_REFUSED)
+        self.assertIn("remediation", buf.getvalue().lower())
+
 
 class TestExitCodes(unittest.TestCase):
     def run_main(self, argv):

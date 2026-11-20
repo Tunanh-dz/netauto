@@ -23,12 +23,15 @@ CREATE TABLE IF NOT EXISTS injections (
     status          TEXT    NOT NULL DEFAULT 'running',   -- running|detected|missed|invalid
     incident_id     INTEGER,                -- sự cố khớp (nếu được phát hiện)
     detected_at     TEXT,                   -- giờ snapshot đầu tiên NHÌN THẤY lỗi (opened_at của sự cố)
-    seen_at         TEXT                    -- lúc sự cố CÓ MẶT trong DB (cảnh báo thật sự tồn tại)
+    seen_at         TEXT,                   -- lúc sự cố CÓ MẶT trong DB (cảnh báo thật sự tồn tại)
+    closed_at       TEXT,                   -- lúc sự cố khớp được ĐÓNG (mạng trở lại bình thường)
+    mode            TEXT    NOT NULL DEFAULT 'detect'   -- detect: chỉ đo phát hiện; remediate: chờ máy tự sửa
 );
 """
 
 # Cột thêm sau này: CSDL cũ được nâng cấp tại chỗ.
-NEW_COLUMNS = {"seen_at": "TEXT"}
+NEW_COLUMNS = {"seen_at": "TEXT", "closed_at": "TEXT",
+               "mode": "TEXT NOT NULL DEFAULT 'detect'"}
 
 
 @dataclass(frozen=True)
@@ -63,16 +66,23 @@ def ensure_schema(conn) -> None:
     conn.commit()
 
 
-def start_injection(conn, fault: Fault, at: str, before_snapshot: int) -> int:
+def start_injection(conn, fault: Fault, at: str, before_snapshot: int,
+                    mode: str = "detect") -> int:
     cur = conn.execute(
-        "INSERT INTO injections (fault, node, expect_check, injected_at, before_snapshot) "
-        "VALUES (?, ?, ?, ?, ?)", (fault.name, fault.node, fault.expect_check, at, before_snapshot))
+        "INSERT INTO injections (fault, node, expect_check, injected_at, before_snapshot, mode) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (fault.name, fault.node, fault.expect_check, at, before_snapshot, mode))
     conn.commit()
     return cur.lastrowid
 
 
 def mark_restored(conn, inj_id: int, at: str) -> None:
     conn.execute("UPDATE injections SET restored_at = ? WHERE id = ?", (at, inj_id))
+    conn.commit()
+
+
+def mark_closed(conn, inj_id: int, at: str) -> None:
+    conn.execute("UPDATE injections SET closed_at = ? WHERE id = ?", (at, inj_id))
     conn.commit()
 
 
@@ -125,11 +135,18 @@ def summarize(rows: list[dict]) -> dict:
                    median=statistics.median(times))
     if seen:
         out.update(obs_mean=statistics.mean(seen), obs_max=max(seen))
+    fixes = [r["fix_seconds"] for r in hit if r.get("fix_seconds") is not None]
+    out["fixed"] = len(fixes)
+    out["unfixed"] = sum(1 for r in hit
+                         if r.get("mode") == "remediate" and r.get("fix_seconds") is None)
+    if fixes:
+        out.update(fix_min=min(fixes), fix_max=max(fixes), fix_mean=statistics.mean(fixes),
+                   fix_median=statistics.median(fixes))
     return out
 
 
 COLS = ("id", "fault", "node", "expect_check", "injected_at", "before_snapshot",
-        "restored_at", "status", "incident_id", "detected_at", "seen_at")
+        "restored_at", "status", "incident_id", "detected_at", "seen_at", "closed_at", "mode")
 
 
 def list_injections(conn, limit: int = 20) -> list[dict]:
@@ -142,19 +159,22 @@ def list_injections(conn, limit: int = 20) -> list[dict]:
                                  if d["detected_at"] else None)
         d["seconds"] = (detection_seconds(d, {"opened_at": d["seen_at"]})
                         if d["seen_at"] else None)
+        d["fix_seconds"] = (detection_seconds(d, {"opened_at": d["closed_at"]})
+                            if d["closed_at"] else None)
         out.append(d)
     return out
 
 
 def print_table(rows: list[dict]) -> None:
     print(f"{'ID':<4}{'LỖI':<18}{'GÂY LÚC':<16}{'KẾT QUẢ':<10}{'THẤY LỖI SAU':<14}"
-          f"{'CẢNH BÁO SAU':<14}SỰ CỐ")
+          f"{'CẢNH BÁO SAU':<14}{'SỬA XONG SAU':<15}SỰ CỐ")
     for r in reversed(rows):
         seen = f"{r['observed_seconds']:.1f} giây" if r["observed_seconds"] is not None else "-"
         took = f"{r['seconds']:.1f} giây" if r["seconds"] is not None else "-"
+        fix = f"{r['fix_seconds']:.1f} giây" if r["fix_seconds"] is not None else "-"
         inc = f"#{r['incident_id']}" if r["incident_id"] else "-"
         print(f"{r['id']:<4}{r['fault']:<18}{timefmt.stamp(r['injected_at']):<16}"
-              f"{r['status']:<10}{seen:<14}{took:<14}{inc}")
+              f"{r['status']:<10}{seen:<14}{took:<14}{fix:<15}{inc}")
 
 
 def print_summary(s: dict) -> None:
@@ -169,6 +189,13 @@ def print_summary(s: dict) -> None:
     if "obs_mean" in s:
         print(f"Đến snapshot đầu tiên nhìn thấy lỗi: trung bình {s['obs_mean']:.1f}, "
               f"lớn nhất {s['obs_max']:.1f} giây (độ phân giải ~1 giây)")
+    if s.get("fixed") or s.get("unfixed"):
+        total = s["fixed"] + s["unfixed"]
+        print(f"Tự sửa xong: {s['fixed']}/{total} lần (máy không sửa kịp: {s['unfixed']})")
+    if "fix_mean" in s:
+        print(f"Từ lúc gây lỗi đến khi sự cố đóng (MTTR): nhỏ nhất {s['fix_min']:.1f}, "
+              f"trung vị {s['fix_median']:.1f}, trung bình {s['fix_mean']:.1f}, "
+              f"lớn nhất {s['fix_max']:.1f} giây")
 
 
 def main():
