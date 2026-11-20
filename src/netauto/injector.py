@@ -11,6 +11,7 @@ Chạy:  python3 -m netauto.injector --fault r1-subif-down --runs 10          (x
        python3 -m netauto.injector --all --runs 4 --yes                     (chạy thật)
 """
 import argparse
+import random
 import sys
 import time
 from datetime import datetime
@@ -67,7 +68,8 @@ def closed_at_of(conn, incident_id: int):
 
 def run_once(conn, fault, *, run=transport.run, clock=now, sleep=time.sleep, poll_s=0.5,
              detect_timeout=45.0, recover_timeout=90.0, settle_s=10.0,
-             remediate=False, fix_timeout=120.0, remediation_alive=None) -> dict:
+             remediate=False, fix_timeout=120.0, remediation_alive=None,
+             jitter_s=0.0, rng=random.random) -> dict:
     """Một lần đo. Trả về dòng injections (dict). Ném NotClean / RecoveryFailed.
 
     remediate=False: đo phát hiện, rồi TỰ khôi phục lỗi (như trước).
@@ -77,6 +79,8 @@ def run_once(conn, fault, *, run=transport.run, clock=now, sleep=time.sleep, pol
     if remediate and remediation_alive is not None and not remediation_alive():
         raise NotClean("remediation không chạy (chạy: python3 -m netauto.remediation --loop "
                        "hoặc systemctl --user start netauto-remediation).")
+    if jitter_s > 0:                       # lệch pha so với chu kỳ monitor; không tính vào số đo
+        sleep(rng() * jitter_s)
     t0 = clock()
     inj_id = injections.start_injection(conn, fault, t0, before,
                                         "remediate" if remediate else "detect")
@@ -143,8 +147,12 @@ def main(argv=None) -> int:
                     help="giữ lỗi để remediation tự sửa và đo thời gian sửa (cần remediation đang chạy)")
     ap.add_argument("--fix-timeout", type=float, default=120,
                     help="chờ máy tự sửa tối đa chừng này giây rồi mới khôi phục bằng tay")
+    ap.add_argument("--jitter", type=float, default=0,
+                    help="chờ ngẫu nhiên 0..N giây trước mỗi lần gây lỗi (nên >= chu kỳ monitor)")
     ap.add_argument("--db", default=db.DB_PATH)
     args = ap.parse_args(argv)
+    if args.jitter < 0:
+        ap.error("--jitter không được âm")
 
     names = sorted(injections.FAULTS) if args.all else (args.fault or [])
     if not names:
@@ -175,7 +183,8 @@ def main(argv=None) -> int:
                 r = run_once(conn, f, detect_timeout=args.detect_timeout,
                              recover_timeout=args.recover_timeout, settle_s=args.settle,
                              remediate=args.remediate, fix_timeout=args.fix_timeout,
-                             remediation_alive=lambda: remediation_running(args.db))
+                             remediation_alive=lambda: remediation_running(args.db),
+                             jitter_s=args.jitter)
                 ids.append(r["id"])
                 seen = f"{r['observed_seconds']:.1f}" if r["observed_seconds"] is not None else "-"
                 took = f"{r['seconds']:.1f}" if r["seconds"] is not None else "-"

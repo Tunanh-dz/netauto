@@ -133,3 +133,34 @@ class TestDb(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestPurge(unittest.TestCase):
+    """26A: xóa các dòng đo cũ (đo thử, đo lỗi) trước khi đo chính thức."""
+
+    def make(self):
+        conn = sqlite3.connect(":memory:")
+        inj.ensure_schema(conn)
+        fault = inj.FAULTS["r1-subif-down"]
+        ids = [inj.start_injection(conn, fault, "2026-01-01T10:00:0%d.000+00:00" % i, 1)
+               for i in range(3)]
+        inj.mark_status(conn, ids[0], "detected")
+        inj.mark_status(conn, ids[1], "missed")
+        return conn, ids
+
+    def test_purge_removes_finished_rows_and_keeps_running(self):
+        conn, ids = self.make()
+        n = inj.purge(conn)
+        self.assertEqual(n, 2)
+        left = [r["id"] for r in inj.list_injections(conn, 50)]
+        self.assertEqual(left, [ids[2]])                 # dòng "running" được giữ lại
+
+    def test_purge_before_id_only_removes_older(self):
+        conn, ids = self.make()
+        self.assertEqual(inj.purge(conn, before_id=ids[1]), 1)
+        left = sorted(r["id"] for r in inj.list_injections(conn, 50))
+        self.assertEqual(left, [ids[1], ids[2]])
+
+    def test_purge_on_empty_table(self):
+        conn = sqlite3.connect(":memory:")
+        inj.ensure_schema(conn)
+        self.assertEqual(inj.purge(conn), 0)

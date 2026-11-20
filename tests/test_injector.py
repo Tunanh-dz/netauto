@@ -171,6 +171,49 @@ class TestCheckClean(unittest.TestCase):
         w = World()
         self.assertEqual(injector.check_clean(w.conn, w.clock()), w.snap_id())
 
+class TestJitter(unittest.TestCase):
+    """26A: chờ ngẫu nhiên trước khi gây lỗi, để không luôn trúng cùng pha của chu kỳ monitor."""
+
+    def sleeps_before_inject(self, w, **kw):
+        seen = []
+        orig = w.sleep
+
+        def spy(s):
+            if not any(c[1] == FAULT.inject for c in w.cmds):
+                seen.append(s)
+            orig(s)
+        w.sleep = spy
+        w.on_tick = lambda w: w.close_all()
+        w.go(detect_timeout=2, **kw)
+        return seen
+
+    def test_no_jitter_means_no_wait_before_inject(self):
+        self.assertEqual(self.sleeps_before_inject(World()), [])
+
+    def test_jitter_waits_rng_times_jitter_before_inject(self):
+        seen = self.sleeps_before_inject(World(), jitter_s=5.0, rng=lambda: 0.4)
+        self.assertEqual(seen, [2.0])
+
+    def test_jitter_wait_not_counted_in_detection_time(self):
+        w = World()
+        state = {"ticks": 0}
+
+        def monitor(w):
+            if any(c[1] == FAULT.inject for c in w.cmds):
+                state["ticks"] += 1
+                if state["ticks"] == 8:                  # 4 giây sau khi gây lỗi
+                    w.open_incident()
+            if FAULT.restore in [c[1] for c in w.cmds]:
+                w.close_all()
+        w.on_tick = monitor
+        r = w.go(jitter_s=10.0, rng=lambda: 0.9)         # chờ 9 giây trước khi gây lỗi
+        self.assertAlmostEqual(r["seconds"], 4.0, delta=1.0)
+
+    def test_cli_has_jitter_flag(self):
+        with self.assertRaises(SystemExit):              # --jitter âm bị từ chối
+            injector.main(["--all", "--jitter", "-1"])
+
+
 class TestRemediateMode(unittest.TestCase):
     """25C-2: giữ lỗi, để remediation tự sửa, đo đến lúc sự cố đóng."""
 

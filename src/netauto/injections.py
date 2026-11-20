@@ -198,13 +198,36 @@ def print_summary(s: dict) -> None:
               f"lớn nhất {s['fix_max']:.1f} giây")
 
 
+def purge(conn, before_id=None) -> int:
+    """Xóa các dòng đã kết thúc (không đụng dòng 'running'). before_id: chỉ xóa id nhỏ hơn."""
+    sql, args = "DELETE FROM injections WHERE status != 'running'", []
+    if before_id is not None:
+        sql += " AND id < ?"
+        args.append(before_id)
+    n = conn.execute(sql, args).rowcount
+    conn.commit()
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser(prog="netauto.injections")
     ap.add_argument("--limit", type=int, default=20)
+    ap.add_argument("--purge", action="store_true", help="xóa các dòng đo đã kết thúc")
+    ap.add_argument("--before-id", type=int, help="với --purge: chỉ xóa id nhỏ hơn số này")
+    ap.add_argument("--yes", action="store_true", help="xác nhận xóa thật")
     ap.add_argument("--db", default=db.DB_PATH)
     args = ap.parse_args()
     conn = db.connect(args.db)
     ensure_schema(conn)
+    if args.purge:
+        if not args.yes:
+            n = conn.execute("SELECT COUNT(*) FROM injections WHERE status != 'running'"
+                             + (" AND id < %d" % args.before_id if args.before_id else "")).fetchone()[0]
+            print(f"XEM TRƯỚC: sẽ xóa {n} dòng. Thêm --yes để xóa thật.")
+        else:
+            print(f"Đã xóa {purge(conn, args.before_id)} dòng.")
+        conn.close()
+        return
     rows = list_injections(conn, args.limit)
     if not rows:
         print("(chưa có lần gây lỗi nào)")
