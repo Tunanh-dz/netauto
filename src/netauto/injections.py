@@ -7,6 +7,7 @@ Xem:  python3 -m netauto.injections [--limit N] [--db FILE]
 """
 import argparse
 import statistics
+from datetime import datetime, timezone
 from dataclasses import dataclass
 
 from netauto import db, incidents, timefmt
@@ -198,15 +199,31 @@ def print_summary(s: dict) -> None:
               f"lớn nhất {s['fix_max']:.1f} giây")
 
 
-def purge(conn, before_id=None) -> int:
-    """Xóa các dòng đã kết thúc (không đụng dòng 'running'). before_id: chỉ xóa id nhỏ hơn."""
-    sql, args = "DELETE FROM injections WHERE status != 'running'", []
-    if before_id is not None:
-        sql += " AND id < ?"
-        args.append(before_id)
-    n = conn.execute(sql, args).rowcount
+STALE_RUNNING_S = 3600     # dòng 'running' treo quá lâu: lần chạy bị ngắt, không ai đóng nó
+
+
+def purgeable_ids(conn, before_id=None, stale_s=STALE_RUNNING_S, now=None) -> list[int]:
+    """Các dòng được phép xóa: đã kết thúc, hoặc 'running' nhưng đã treo quá stale_s giây."""
+    now = now or datetime.now(timezone.utc)
+    ids = []
+    for rid, status, injected_at in conn.execute("SELECT id, status, injected_at FROM injections"):
+        if before_id is not None and rid >= before_id:
+            continue
+        if status != "running" or (now - timefmt.parse(injected_at)).total_seconds() > stale_s:
+            ids.append(rid)
+    return ids
+
+
+def count_purgeable(conn, before_id=None, stale_s=STALE_RUNNING_S, now=None) -> int:
+    return len(purgeable_ids(conn, before_id, stale_s, now))
+
+
+def purge(conn, before_id=None, stale_s=STALE_RUNNING_S, now=None) -> int:
+    """Xóa dòng đã kết thúc và dòng 'running' bị bỏ rơi; dòng 'running' còn mới được giữ lại."""
+    ids = purgeable_ids(conn, before_id, stale_s, now)
+    conn.executemany("DELETE FROM injections WHERE id = ?", [(i,) for i in ids])
     conn.commit()
-    return n
+    return len(ids)
 
 
 def main():
@@ -221,8 +238,7 @@ def main():
     ensure_schema(conn)
     if args.purge:
         if not args.yes:
-            n = conn.execute("SELECT COUNT(*) FROM injections WHERE status != 'running'"
-                             + (" AND id < %d" % args.before_id if args.before_id else "")).fetchone()[0]
+            n = count_purgeable(conn, args.before_id)
             print(f"XEM TRƯỚC: sẽ xóa {n} dòng. Thêm --yes để xóa thật.")
         else:
             print(f"Đã xóa {purge(conn, args.before_id)} dòng.")

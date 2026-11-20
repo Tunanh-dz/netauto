@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from netauto import injections as inj
 
@@ -134,8 +135,11 @@ class TestDb(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+NOW = datetime(2026, 1, 1, 10, 5, 0, tzinfo=timezone.utc)     # 5 phút sau lần gây lỗi cuối
+
+
 class TestPurge(unittest.TestCase):
-    """26A: xóa các dòng đo cũ (đo thử, đo lỗi) trước khi đo chính thức."""
+    """26A/26B: xóa các dòng đo cũ (đo thử, đo lỗi, lần chạy bị ngắt) trước khi đo chính thức."""
 
     def make(self):
         conn = sqlite3.connect(":memory:")
@@ -147,20 +151,34 @@ class TestPurge(unittest.TestCase):
         inj.mark_status(conn, ids[1], "missed")
         return conn, ids
 
-    def test_purge_removes_finished_rows_and_keeps_running(self):
+    def test_purge_removes_finished_rows_and_keeps_fresh_running(self):
         conn, ids = self.make()
-        n = inj.purge(conn)
-        self.assertEqual(n, 2)
+        self.assertEqual(inj.purge(conn, now=NOW), 2)
         left = [r["id"] for r in inj.list_injections(conn, 50)]
-        self.assertEqual(left, [ids[2]])                 # dòng "running" được giữ lại
+        self.assertEqual(left, [ids[2]])                 # dòng "running" còn mới được giữ lại
+
+    def test_purge_removes_stale_running_row(self):
+        conn, ids = self.make()
+        later = NOW + timedelta(hours=2)                 # dòng running đã treo hơn 1 giờ
+        self.assertEqual(inj.purge(conn, now=later), 3)
+        self.assertEqual(inj.list_injections(conn, 50), [])
+
+    def test_stale_threshold_is_configurable(self):
+        conn, ids = self.make()
+        self.assertEqual(inj.purge(conn, now=NOW, stale_s=60), 3)   # 5 phút > 60 giây
 
     def test_purge_before_id_only_removes_older(self):
         conn, ids = self.make()
-        self.assertEqual(inj.purge(conn, before_id=ids[1]), 1)
+        self.assertEqual(inj.purge(conn, before_id=ids[1], now=NOW), 1)
         left = sorted(r["id"] for r in inj.list_injections(conn, 50))
         self.assertEqual(left, [ids[1], ids[2]])
+
+    def test_count_matches_what_purge_deletes(self):
+        conn, ids = self.make()
+        n = inj.count_purgeable(conn, now=NOW)
+        self.assertEqual(n, inj.purge(conn, now=NOW))
 
     def test_purge_on_empty_table(self):
         conn = sqlite3.connect(":memory:")
         inj.ensure_schema(conn)
-        self.assertEqual(inj.purge(conn), 0)
+        self.assertEqual(inj.purge(conn, now=NOW), 0)
