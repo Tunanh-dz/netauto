@@ -3,7 +3,7 @@ import json
 import sqlite3
 import unittest
 
-from netauto import health, injections, maintenance, remediation, service, webdata
+from netauto import audit, health, injections, maintenance, remediation, service, webdata
 
 T = "2026-01-01T10:00:00+07:00"
 LATER = "2026-01-01T10:00:03+07:00"
@@ -123,6 +123,59 @@ class TestLists(unittest.TestCase):
         out = webdata.maintenance_list(conn, now=LATER)
         self.assertEqual(len(out["items"]), 1)
         self.assertEqual(len(out["active"]), 1)
+
+
+def add_audit(conn, result="THÀNH CÔNG", detail=None):
+    conn.row_factory = sqlite3.Row            # audit.record cần truy cập cột theo tên
+    try:
+        audit.record(conn, audit.new_entry("intent/network.yml", {"r1"}, False, result, 0, 1.5,
+                                           detail or {"steps": []}))
+    finally:
+        conn.row_factory = None
+
+
+class TestAuditData(unittest.TestCase):
+    def test_empty_log_has_valid_chain(self):
+        out = webdata.audit_list(make_conn())
+        self.assertEqual(out["items"], [])
+        self.assertTrue(out["chain"]["ok"])
+
+    def test_list_is_newest_first_and_chain_ok(self):
+        conn = make_conn()
+        for r in ("THÀNH CÔNG", "HOÀN TÁC", "TỪ CHỐI"):
+            add_audit(conn, r)
+        out = webdata.audit_list(conn)
+        self.assertEqual([i["id"] for i in out["items"]], [3, 2, 1])
+        self.assertTrue(out["chain"]["ok"])
+        self.assertEqual(len(out["items"][0]["hash"]), 12)       # chỉ hiện đầu mã băm
+
+    def test_tampering_is_reported(self):
+        conn = make_conn()
+        for _ in range(3):
+            add_audit(conn)
+        conn.execute("UPDATE audit SET result = 'ĐÃ SỬA' WHERE id = 2")
+        chain = webdata.audit_list(conn)["chain"]
+        self.assertFalse(chain["ok"])
+        self.assertEqual(chain["bad_id"], 2)
+        self.assertIn("sửa", chain["reason"])
+
+    def test_detail_contains_parsed_steps(self):
+        conn = make_conn()
+        add_audit(conn, detail={"steps": [{"status": "ok", "node": "r1", "label": "bật eth1.10"}]})
+        d = webdata.audit_detail(conn, 1)
+        self.assertEqual(d["detail"]["steps"][0]["node"], "r1")
+        self.assertEqual(d["result"], "THÀNH CÔNG")
+
+    def test_detail_missing_is_none(self):
+        self.assertIsNone(webdata.audit_detail(make_conn(), 99))
+
+    def test_row_factory_is_restored_and_result_is_json(self):
+        conn = make_conn()
+        add_audit(conn)
+        out = webdata.audit_list(conn)
+        webdata.audit_detail(conn, 1)
+        self.assertIsNone(conn.row_factory)
+        json.dumps(out)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ nên mặc định chỉ lắng nghe trên 127.0.0.1 (máy này).
 import argparse
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from netauto import db, webdata
@@ -56,6 +56,17 @@ def create_app(db_path: str = db.DB_PATH) -> FastAPI:
     @app.get("/api/maintenance")
     def maintenance_list(limit: int | None = None):
         return query(webdata.maintenance_list, limit)
+
+    @app.get("/api/audit")
+    def audit_list(limit: int | None = None):
+        return query(webdata.audit_list, limit)
+
+    @app.get("/api/audit/{entry_id}")
+    def audit_detail(entry_id: int):
+        entry = query(webdata.audit_detail, entry_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="không có bản ghi kiểm toán này")
+        return entry
 
     return app
 

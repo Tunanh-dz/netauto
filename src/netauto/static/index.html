@@ -49,11 +49,29 @@
   th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
   tr:last-child td { border-bottom: 0; }
   .empty { padding: 16px; color: var(--muted); }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav a { padding: 4px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: 14px; }
+  nav a.active { background: var(--idle-bg); color: var(--ink); }
+  .panel[hidden] { display: none; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; }
+  tr.click { cursor: pointer; }
+  tr.click:hover td { background: var(--idle-bg); }
+  .detail { margin-top: 16px; padding: 14px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  .detail h3 { margin: 0 0 6px; font-size: 15px; }
+  .detail ul { margin: 6px 0 12px; padding-left: 20px; }
+  .num { font-size: 28px; font-weight: 700; line-height: 1.2; }
 </style>
 </head>
 <body>
 <header>
   <h1>NetAuto</h1>
+  <nav id="nav">
+    <a href="#overview" data-tab="overview">Tổng quan</a>
+    <a href="#incidents" data-tab="incidents">Sự cố</a>
+    <a href="#fixes" data-tab="fixes">Tự sửa</a>
+    <a href="#measure" data-tab="measure">Đo lường</a>
+    <a href="#audit" data-tab="audit">Kiểm toán</a>
+  </nav>
   <span id="monitor" class="pill">Monitor: ...</span>
   <span id="maint" class="pill warn" hidden>Đang bảo trì</span>
   <span id="breaker" class="pill bad" hidden>Cầu chì tự sửa đã ngắt</span>
@@ -63,6 +81,7 @@
 <main id="app">
   <div id="banner">Mất kết nối tới API. Đang thử lại...</div>
 
+  <div id="tab-overview" class="panel">
   <div class="grid">
     <div class="card">
       <h2>Điểm sức khỏe</h2>
@@ -91,6 +110,36 @@
     <h2>Lịch sử tự sửa (gần đây)</h2>
     <div class="tablewrap" id="fixes"></div>
   </section>
+  </div>
+
+  <div id="tab-incidents" class="panel" hidden>
+    <div class="toolbar">
+      <label><input type="checkbox" id="only-open"> Chỉ sự cố đang mở</label>
+      <span class="muted">Hiển thị tối đa 200 sự cố gần nhất. Sự cố có "gốc" là triệu chứng của một sự cố ở tầng thấp hơn.</span>
+    </div>
+    <div class="tablewrap" id="inc-all"></div>
+  </div>
+
+  <div id="tab-fixes" class="panel" hidden>
+    <div class="toolbar"><span id="breaker-state" class="pill">-</span>
+      <span class="muted">Mỗi dòng là một lần bộ tự sửa chạy lệnh apply cho một thiết bị.</span></div>
+    <div class="tablewrap" id="fix-all"></div>
+  </div>
+
+  <div id="tab-measure" class="panel" hidden>
+    <div class="grid" id="measure-cards"></div>
+    <section>
+      <h2>Các lần đo gần nhất</h2>
+      <div class="tablewrap" id="inj-all"></div>
+    </section>
+  </div>
+
+  <div id="tab-audit" class="panel" hidden>
+    <div class="toolbar"><span id="chain" class="pill">Chuỗi băm: ...</span>
+      <span class="muted">Bấm vào một dòng để xem các bước đã thực hiện.</span></div>
+    <div class="tablewrap" id="audit-all"></div>
+    <div id="audit-detail"></div>
+  </div>
 </main>
 
 <script>
@@ -169,7 +218,7 @@ function drawSpark(items) {
   svg.appendChild(line);
 }
 
-function table(container, headers, rows, emptyText) {
+function table(container, headers, rows, emptyText, onRow) {
   while (container.firstChild) container.removeChild(container.firstChild);
   if (!rows.length) { container.appendChild(el("div", "empty", emptyText)); return; }
   var t = el("table");
@@ -177,8 +226,9 @@ function table(container, headers, rows, emptyText) {
   headers.forEach(function (h) { hr.appendChild(el("th", "", h)); });
   thead.appendChild(hr); t.appendChild(thead);
   var tb = el("tbody");
-  rows.forEach(function (cells) {
-    var tr = el("tr");
+  rows.forEach(function (cells, idx) {
+    var tr = el("tr", onRow ? "click" : "");
+    if (onRow) tr.addEventListener("click", function () { onRow(idx); });
     cells.forEach(function (c) {
       var td = el("td", c.cls || "");
       if (c.node) td.appendChild(c.node); else td.textContent = c.text;
@@ -227,7 +277,7 @@ function renderFixes(items) {
   }
 }
 
-function refresh() {
+function refreshOverview() {
   return Promise.all([
     getJSON("/api/status"),
     getJSON("/api/incidents?only_open=true&limit=50"),
@@ -235,7 +285,6 @@ function refresh() {
     getJSON("/api/remediations?limit=10")
   ]).then(function (r) {
     var status = r[0], inc = r[1], hist = r[2], fix = r[3];
-    $("banner").style.display = "none";
     renderMonitor(status.monitor);
     renderHealth(status.health, hist.items);
     $("open").textContent = status.open_incidents;
@@ -245,11 +294,161 @@ function refresh() {
     renderIncidents(inc.items, status.generated_at);
     renderFixes(fix.items);
     $("updated").textContent = "Cập nhật lúc " + clock(status.generated_at);
+  });
+}
+
+function secondsBetween(a, b) { return (Date.parse(b) - Date.parse(a)) / 1000; }
+function num(v, digits) { return v === null || v === undefined ? "-" : Number(v).toFixed(digits === undefined ? 1 : digits); }
+
+var CLOSE_REASON = {resolved: "đã hết", escalated: "nâng mức", deescalated: "hạ mức",
+                    replaced: "thay thế", cleared_during_gap: "hết trong khoảng trống"};
+
+function refreshIncidents() {
+  var onlyOpen = $("only-open").checked;
+  return getJSON("/api/incidents?limit=200&only_open=" + onlyOpen).then(function (d) {
+    table($("inc-all"),
+      ["#", "Thiết bị", "Mức", "Loại", "Thông điệp", "Mở lúc", "Đóng lúc", "Thời lượng", "Lý do đóng", "Gốc"],
+      d.items.map(function (i) {
+        var dur = i.closed_at ? fmtAge(Math.max(0, secondsBetween(i.opened_at, i.closed_at))) : "đang mở";
+        var root = i.root_id && i.root_id !== i.id ? "triệu chứng của #" + i.root_id : "gốc";
+        return [{text: i.id}, {text: i.node},
+                {node: pill(i.severity, i.severity === "critical" ? "bad" : "warn")},
+                {text: i.kind}, {text: i.message, cls: "msg"}, {text: clock(i.opened_at)},
+                {text: clock(i.closed_at)}, {text: dur},
+                {text: i.closed_at ? (CLOSE_REASON[i.close_reason] || i.close_reason || "-") : "-"},
+                {text: root}];
+      }),
+      "Chưa có sự cố nào.");
+  });
+}
+
+function refreshFixes() {
+  return getJSON("/api/remediations?limit=200").then(function (d) {
+    var b = $("breaker-state");
+    b.textContent = d.breaker_open ? "Cầu chì đã ngắt: tạm dừng tự sửa" : "Cầu chì bình thường";
+    b.className = "pill " + (d.breaker_open ? "bad" : "ok");
+    table($("fix-all"),
+      ["#", "Bắt đầu", "Kết thúc", "Thời gian", "Sự cố", "Thiết bị", "Loại lỗi", "Kết quả", "Mã", "Kiểm toán"],
+      d.items.slice().reverse().map(function (r) {
+        var took = r.finished_at ? fmtAge(Math.max(0, secondsBetween(r.started_at, r.finished_at))) : "-";
+        return [{text: r.id}, {text: clock(r.started_at)}, {text: clock(r.finished_at)}, {text: took},
+                {text: "#" + r.incident_id}, {text: r.node}, {text: r.check_code},
+                {node: pill(r.outcome || "đang chạy", OUTCOME_TONE[r.outcome] || "")},
+                {text: r.exit_code === null || r.exit_code === undefined ? "-" : r.exit_code},
+                {text: r.audit_id ? "#" + r.audit_id : "-"}];
+      }),
+      "Chưa có lần tự sửa nào.");
+  });
+}
+
+function statCard(title, big, small) {
+  var c = el("div", "card");
+  c.appendChild(el("h2", "", title));
+  c.appendChild(el("div", "num", big));
+  c.appendChild(el("div", "muted", small));
+  return c;
+}
+
+function refreshMeasure() {
+  return getJSON("/api/injections?limit=50").then(function (d) {
+    var s = d.summary, box = $("measure-cards");
+    while (box.firstChild) box.removeChild(box.firstChild);
+    var rate = s.rate === null || s.rate === undefined ? "-" : Math.round(s.rate * 100) + "%";
+    box.appendChild(statCard("Phát hiện", s.detected + "/" + s.runs, "Tỉ lệ " + rate + ", bỏ sót " + s.missed));
+    box.appendChild(statCard("Cảnh báo có mặt (trung vị)", num(s.median) + " giây",
+      "Nhỏ nhất " + num(s.min) + ", lớn nhất " + num(s.max) + " giây"));
+    box.appendChild(statCard("Thời gian sửa, MTTR (trung vị)", num(s.fix_median) + " giây",
+      "Tự sửa xong " + s.fixed + " lần; lớn nhất " + num(s.fix_max) + " giây"));
+    table($("inj-all"),
+      ["#", "Lỗi", "Gây lúc", "Kết quả", "Thấy lỗi sau", "Cảnh báo sau", "Sửa xong sau", "Chế độ"],
+      d.items.map(function (r) {
+        return [{text: r.id}, {text: r.fault}, {text: clock(r.injected_at)}, {text: r.status},
+                {text: num(r.observed_seconds) + " giây"}, {text: num(r.seconds) + " giây"},
+                {text: r.fix_seconds === null || r.fix_seconds === undefined ? "-" : num(r.fix_seconds) + " giây"},
+                {text: r.mode}];
+      }),
+      "Chưa có lần đo nào. Dùng: python3 -m netauto.injector --all --yes");
+  });
+}
+
+function showAuditDetail(entry) {
+  var box = $("audit-detail");
+  while (box.firstChild) box.removeChild(box.firstChild);
+  var d = el("div", "detail");
+  var det = entry.detail || {};
+  d.appendChild(el("h3", "", "Bản ghi #" + entry.id + ": " + entry.result + " (mã " + entry.exit_code + ")"));
+  d.appendChild(el("div", "muted", entry.at + " | " + entry.actor + " | thiết bị: " + entry.nodes +
+    " | intent " + entry.intent_sha));
+  if (det.reason) d.appendChild(el("div", "", "Lý do: " + det.reason));
+  d.appendChild(el("div", "", "Luồng thông: trước " + (det.flows_before === undefined ? "?" : det.flows_before) +
+    ", sau " + (det.flows_after === undefined ? "?" : det.flows_after)));
+  if (det.regressions && det.regressions.length) d.appendChild(el("div", "", "Luồng xấu đi: " + det.regressions.join("; ")));
+  d.appendChild(el("h3", "", "Các bước"));
+  var ul = el("ul");
+  (det.steps || []).forEach(function (st) {
+    ul.appendChild(el("li", "", st.status + " | " + st.node + " | " + st.label + (st.note ? "  # " + st.note : "")));
+  });
+  if (!(det.steps || []).length) ul.appendChild(el("li", "", "(không có bước nào)"));
+  d.appendChild(ul);
+  if (det.undo && det.undo.length) {
+    d.appendChild(el("h3", "", "Hoàn tác"));
+    var u = el("ul");
+    det.undo.forEach(function (x) { u.appendChild(el("li", "", (x.ok ? "OK" : "LỖI") + " | " + x.node + " | " + x.command)); });
+    d.appendChild(u);
+  }
+  box.appendChild(d);
+}
+
+function refreshAudit() {
+  return getJSON("/api/audit?limit=100").then(function (d) {
+    var c = $("chain");
+    if (d.chain.ok) { c.textContent = "Chuỗi băm: hợp lệ"; c.className = "pill ok"; }
+    else { c.textContent = "Chuỗi băm: BỊ SỬA tại bản ghi #" + d.chain.bad_id + " (" + d.chain.reason + ")"; c.className = "pill bad"; }
+    table($("audit-all"),
+      ["#", "Lúc", "Người", "Kết quả", "Mã", "Thiết bị", "Giây", "Intent", "Băm"],
+      d.items.map(function (r) {
+        return [{text: r.id}, {text: r.at.substr(0, 10) + " " + clock(r.at)}, {text: r.actor}, {text: r.result},
+                {text: r.exit_code}, {text: r.nodes}, {text: num(r.duration_s)}, {text: r.intent_sha}, {text: r.hash}];
+      }),
+      "Chưa có bản ghi kiểm toán.",
+      function (idx) {
+        getJSON("/api/audit/" + d.items[idx].id).then(showAuditDetail).catch(function () {
+          $("banner").style.display = "block";
+        });
+      });
+  });
+}
+
+var TABS = {overview: refreshOverview, incidents: refreshIncidents, fixes: refreshFixes,
+            measure: refreshMeasure, audit: refreshAudit};
+
+function currentTab() {
+  var name = (location.hash || "#overview").substr(1);
+  return TABS[name] ? name : "overview";
+}
+
+function showTab() {
+  var name = currentTab();
+  Object.keys(TABS).forEach(function (t) { $("tab-" + t).hidden = (t !== name); });
+  Array.prototype.forEach.call(document.querySelectorAll("#nav a"), function (a) {
+    a.className = a.getAttribute("data-tab") === name ? "active" : "";
+  });
+}
+
+function refresh() {
+  var name = currentTab();
+  var jobs = [refreshOverview()];                   // thanh trên cùng luôn cần dữ liệu tổng quan
+  if (name !== "overview") jobs.push(TABS[name]());
+  return Promise.all(jobs).then(function () {
+    $("banner").style.display = "none";
   }).catch(function () {
     $("banner").style.display = "block";
   });
 }
 
+window.addEventListener("hashchange", function () { showTab(); refresh(); });
+$("only-open").addEventListener("change", refresh);
+showTab();
 refresh();
 setInterval(function () { if (!document.hidden) refresh(); }, REFRESH_MS);
 </script>

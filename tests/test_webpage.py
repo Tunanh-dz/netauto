@@ -34,5 +34,18 @@ class TestOverviewPage(unittest.TestCase):
         self.assertIn("Mất kết nối", self.html)
 
 
+    def test_has_all_tabs(self):
+        for tab in ("tab-overview", "tab-incidents", "tab-fixes", "tab-measure", "tab-audit"):
+            self.assertIn(tab, self.html)
+        self.assertIn("hashchange", self.html)          # chuyển tab bằng địa chỉ, F5 không mất tab
+
+    def test_tabs_use_their_api(self):
+        for path in ("/api/injections", "/api/audit"):
+            self.assertIn(path, self.html)
+
+    def test_audit_chain_state_is_shown(self):
+        self.assertIn("Chuỗi băm", self.html)
+
+
 if __name__ == "__main__":
     unittest.main()

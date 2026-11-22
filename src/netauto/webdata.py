@@ -4,7 +4,10 @@ Tách riêng khỏi FastAPI để (1) kiểm thử được mà không cần ch�
 dùng lại đúng các hàm mà dòng lệnh đang dùng, không viết lại logic nghiệp vụ.
 Mọi giá trị trả về đều chuyển được sang JSON.
 """
-from netauto import (db, health, incidents, injections, maintenance, remediation, runs,
+import json
+import sqlite3
+
+from netauto import (audit, db, health, incidents, injections, maintenance, remediation, runs,
                      service)
 
 DEFAULT_LIMIT = 50
@@ -30,6 +33,7 @@ def ensure_all(conn) -> None:
     runs.ensure_schema(conn)
     service.ensure_schema(conn)
     injections.ensure_schema(conn)
+    conn.executescript(audit.SCHEMA)
 
 
 def _health_row(row) -> dict:
@@ -77,3 +81,35 @@ def maintenance_list(conn, limit=None, now: str | None = None) -> dict:
     now = now or runs.now()
     return {"items": maintenance.list_windows(conn, clamp_limit(limit, 20)),
             "active": maintenance.windows_at(conn, now)}
+
+
+AUDIT_COLS = ("id", "at", "actor", "result", "exit_code", "nodes", "prune", "duration_s",
+              "intent_sha", "hash")
+
+
+def audit_list(conn, limit=None) -> dict:
+    """Nhật ký kiểm toán (mới nhất trước) kèm kết quả kiểm tra chuỗi băm toàn bộ."""
+    old, conn.row_factory = conn.row_factory, sqlite3.Row    # audit.verify đọc cột theo tên
+    try:
+        ok, bad_id, reason = audit.verify(conn)
+        rows = conn.execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?",
+                            (clamp_limit(limit),)).fetchall()
+        items = [{**{k: r[k] for k in AUDIT_COLS}, "hash": r["hash"][:12]} for r in rows]
+    finally:
+        conn.row_factory = old
+    return {"items": items, "chain": {"ok": ok, "bad_id": bad_id, "reason": reason}}
+
+
+def audit_detail(conn, entry_id: int):
+    """Một bản ghi kiểm toán đầy đủ (các bước, hoàn tác...), hoặc None nếu không có."""
+    old, conn.row_factory = conn.row_factory, sqlite3.Row
+    try:
+        r = conn.execute("SELECT * FROM audit WHERE id = ?", (entry_id,)).fetchone()
+        if r is None:
+            return None
+        out = {k: r[k] for k in AUDIT_COLS}
+        out.update(hash=r["hash"], prev_hash=r["prev_hash"], intent_path=r["intent_path"],
+                   detail=json.loads(r["detail"]))
+        return out
+    finally:
+        conn.row_factory = old

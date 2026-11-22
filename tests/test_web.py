@@ -56,6 +56,13 @@ class TestApi(unittest.TestCase):
         self.assertIn("text/html", r.headers["content-type"])
         self.assertIn("/api/status", r.text)
 
+    def test_audit_endpoints(self):
+        r = self.client.get("/api/audit")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("items", r.json())
+        self.assertTrue(r.json()["chain"]["ok"])
+        self.assertEqual(self.client.get("/api/audit/999").status_code, 404)
+
     def test_no_write_methods(self):
         for path in ("/api/status", "/api/incidents"):
             self.assertEqual(self.client.post(path).status_code, 405)
