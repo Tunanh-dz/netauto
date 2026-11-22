@@ -47,5 +47,20 @@ class TestOverviewPage(unittest.TestCase):
         self.assertIn("Chuỗi băm", self.html)
 
 
+    def test_actions_tab_and_token_placeholder(self):
+        self.assertIn("tab-actions", self.html)
+        self.assertIn("__NETAUTO_TOKEN__", self.html)          # web.py thay bằng mã thật khi phục vụ
+        self.assertIn("X-NetAuto-Token", self.html)
+
+    def test_hidden_attribute_always_wins(self):
+        """Các nhãn như 'Đang bảo trì' dùng thuộc tính hidden; không có luật này thì CSS display ghi đè và chúng luôn hiện."""
+        self.assertRegex(self.html, r"\[hidden\]\s*\{\s*display:\s*none\s*!important")
+
+    def test_apply_needs_a_second_click(self):
+        for path in ("/api/plan", "/api/apply", "/api/maintenance/open", "/api/maintenance/close"):
+            self.assertIn(path, self.html)
+        self.assertIn("Xác nhận áp dụng", self.html)
+
+
 if __name__ == "__main__":
     unittest.main()

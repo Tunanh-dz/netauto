@@ -112,6 +112,11 @@ def _busy(history, now: str) -> bool:
                for r in history)
 
 
+def is_busy(history, now: str) -> bool:
+    """Có một lần tự sửa đang chạy không (để các bên khác, như giao diện web, tránh chạy chồng)."""
+    return _busy(history, now)
+
+
 def decide(open_rows, history, now: str, policy: Policy = POLICY,
            frozen=frozenset()) -> list[Decision]:
     """Hàm thuần. Một Decision cho mỗi sự cố GỐC đang mở (triệu chứng không được liệt kê)."""

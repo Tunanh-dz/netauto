@@ -7,6 +7,7 @@ Mọi giá trị trả về đều chuyển được sang JSON.
 import json
 import sqlite3
 
+from netauto import intent as intent_mod
 from netauto import (audit, db, health, incidents, injections, maintenance, remediation, runs,
                      service)
 
@@ -113,3 +114,9 @@ def audit_detail(conn, entry_id: int):
         return out
     finally:
         conn.row_factory = old
+
+
+def node_names(intent_path: str | None = None) -> list[str]:
+    """Tên mọi thiết bị trong intent (router, switch, host), theo thứ tự cố định."""
+    data = intent_mod.load_intent(intent_path or intent_mod.INTENT_PATH)
+    return sorted([*data["routers"], *data["switches"], *data["hosts"]])

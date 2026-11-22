@@ -10,7 +10,7 @@ try:
 except ImportError:                                  # chưa cài: bỏ qua thay vì lỗi
     HAVE = False
 
-from netauto import db, health, service, webdata
+from netauto import db, health, remediation, service, webdata
 
 
 @unittest.skipUnless(HAVE, "cần: pip install fastapi uvicorn httpx")
@@ -67,6 +67,112 @@ class TestApi(unittest.TestCase):
         for path in ("/api/status", "/api/incidents"):
             self.assertEqual(self.client.post(path).status_code, 405)
             self.assertEqual(self.client.delete(path).status_code, 405)
+
+
+class FakeRunner:
+    """Thay cho tiến trình plan/apply thật: ghi lại cách được gọi."""
+    def __init__(self):
+        self.calls = []
+
+    def run_plan(self, node, db_path):
+        self.calls.append(("plan", node))
+        return 2, "có thay đổi"
+
+    def run_apply(self, node, db_path):
+        self.calls.append(("apply", node))
+        return 0, "xong"
+
+
+@unittest.skipUnless(HAVE, "cần: pip install fastapi uvicorn httpx")
+class TestWriteApi(unittest.TestCase):
+    TOKEN = "t0k3n-for-tests"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "t.db")
+        conn = db.connect(self.path)
+        webdata.ensure_all(conn)
+        conn.close()
+        from netauto import web
+        self.runner = FakeRunner()
+        app = web.create_app(self.path, token=self.TOKEN, runner=self.runner)
+        self.client = TestClient(app, base_url="http://127.0.0.1:8000")
+        self.ok = {"X-NetAuto-Token": self.TOKEN}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_post_needs_the_token(self):
+        for path in ("/api/plan", "/api/apply", "/api/maintenance/open", "/api/maintenance/close"):
+            self.assertEqual(self.client.post(path, json={}).status_code, 403, path)
+            self.assertEqual(self.client.post(path, json={}, headers={"X-NetAuto-Token": "sai"}).status_code,
+                             403, path)
+        self.assertEqual(self.runner.calls, [])
+
+    def test_post_from_a_foreign_host_is_refused(self):
+        r = self.client.post("/api/plan", json={}, headers={**self.ok, "Host": "evil.example"})
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(self.runner.calls, [])
+
+    def test_plan(self):
+        r = self.client.post("/api/plan", json={"node": "r1"}, headers=self.ok)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["exit_code"], 2)
+        self.assertIn("chờ áp dụng", r.json()["meaning"])
+        self.assertEqual(self.runner.calls, [("plan", "r1")])
+
+    def test_unknown_node_is_rejected_before_running_anything(self):
+        r = self.client.post("/api/plan", json={"node": "r1; reboot"}, headers=self.ok)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.runner.calls, [])
+
+    def test_apply_requires_explicit_confirmation(self):
+        r = self.client.post("/api/apply", json={"node": "r1"}, headers=self.ok)
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/apply", json={"node": "r1", "confirm": False}, headers=self.ok)
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.runner.calls, [])
+
+    def test_apply_with_confirmation_runs(self):
+        r = self.client.post("/api/apply", json={"node": "r1", "confirm": True}, headers=self.ok)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["exit_code"], 0)
+        self.assertEqual(self.runner.calls, [("apply", "r1")])
+
+    def test_apply_refused_while_remediation_runs(self):
+        conn = db.connect(self.path)
+        remediation.ensure_schema(conn)
+        from netauto import maintenance
+        remediation.start(conn, 1, "r1", "router.uplink", maintenance.now())
+        conn.close()
+        r = self.client.post("/api/apply", json={"confirm": True}, headers=self.ok)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(self.runner.calls, [])
+
+    def test_maintenance_open_and_close(self):
+        r = self.client.post("/api/maintenance/open", headers=self.ok,
+                             json={"nodes": "r1", "reason": "thay cáp", "ttl_s": 120})
+        self.assertEqual(r.status_code, 200)
+        active = self.client.get("/api/maintenance").json()["active"]
+        self.assertEqual(len(active), 1)
+        r = self.client.post("/api/maintenance/close", headers=self.ok, json={})
+        self.assertEqual(r.status_code, 200)
+        w = self.client.get("/api/maintenance").json()["items"][0]
+        self.assertEqual(w["close_reason"], "ended")          # cửa sổ đã đóng
+        # "active" vẫn liệt kê nó trong 45 giây ân hạn (để mạng kịp hội tụ), nên không kiểm tra rỗng ở đây
+
+    def test_maintenance_bad_input_is_400(self):
+        r = self.client.post("/api/maintenance/open", headers=self.ok,
+                             json={"nodes": "r1", "reason": "", "ttl_s": 120})
+        self.assertEqual(r.status_code, 400)
+
+    def test_nodes_endpoint(self):
+        self.assertIn("r1", self.client.get("/api/nodes").json()["nodes"])
+
+    def test_root_page_carries_the_token(self):
+        r = self.client.get("/")
+        self.assertIn(self.TOKEN, r.text)
+        self.assertNotIn("__NETAUTO_TOKEN__", r.text)
 
 
 if __name__ == "__main__":

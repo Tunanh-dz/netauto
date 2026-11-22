@@ -18,6 +18,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }   /* thuộc tính hidden phải thắng mọi display khác */
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
@@ -59,6 +60,17 @@
   .detail { margin-top: 16px; padding: 14px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
   .detail h3 { margin: 0 0 6px; font-size: 15px; }
   .detail ul { margin: 6px 0 12px; padding-left: 20px; }
+  .btn { font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 8px; cursor: pointer;
+         border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: wait; }
+  input[type=text], input[type=number], select { font: inherit; padding: 5px 8px; border-radius: 8px;
+         border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  pre.out { margin: 12px 0 0; padding: 12px 14px; background: var(--card); border: 1px solid var(--line);
+            border-radius: 12px; overflow-x: auto; white-space: pre-wrap; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; }
+  .confirmbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; padding: 10px 14px;
+                border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-weight: 600; }
   .num { font-size: 28px; font-weight: 700; line-height: 1.2; }
 </style>
 </head>
@@ -71,6 +83,7 @@
     <a href="#fixes" data-tab="fixes">Tự sửa</a>
     <a href="#measure" data-tab="measure">Đo lường</a>
     <a href="#audit" data-tab="audit">Kiểm toán</a>
+    <a href="#actions" data-tab="actions">Thao tác</a>
   </nav>
   <span id="monitor" class="pill">Monitor: ...</span>
   <span id="maint" class="pill warn" hidden>Đang bảo trì</span>
@@ -140,11 +153,44 @@
     <div class="tablewrap" id="audit-all"></div>
     <div id="audit-detail"></div>
   </div>
+
+  <div id="tab-actions" class="panel" hidden>
+    <div class="card">
+      <h2>Kế hoạch và áp dụng</h2>
+      <div class="toolbar">
+        <label>Thiết bị <select id="act-node"></select></label>
+        <button class="btn primary" id="btn-plan">Xem trước (plan)</button>
+        <button class="btn danger" id="btn-apply">Áp dụng...</button>
+      </div>
+      <div id="apply-confirm" class="confirmbar" hidden>
+        <span id="apply-confirm-text"></span>
+        <button class="btn danger" id="btn-apply-yes">Xác nhận áp dụng</button>
+        <button class="btn" id="btn-apply-no">Hủy</button>
+      </div>
+      <div id="act-meaning" class="muted" style="margin-top:10px"></div>
+      <pre class="out" id="act-out" hidden></pre>
+      <div class="muted" style="margin-top:8px">Áp dụng thật sẽ thay đổi thiết bị, có kiểm chứng và tự hoàn tác, và được ghi vào tab Kiểm toán với người thực hiện "netauto-web".</div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Cửa sổ bảo trì</h2>
+      <div class="toolbar">
+        <label>Thiết bị <select id="mt-node"></select></label>
+        <label>Lý do <input type="text" id="mt-reason" maxlength="200" placeholder="vd. thay cáp r1" size="28"></label>
+        <label>Giây <input type="number" id="mt-ttl" value="300" min="30" max="3600" style="width:80px"></label>
+        <button class="btn primary" id="btn-mt-open">Mở cửa sổ</button>
+        <button class="btn" id="btn-mt-close">Đóng mọi cửa sổ đang mở</button>
+      </div>
+      <div id="mt-result" class="muted"></div>
+      <div class="muted" style="margin-top:8px">Trong cửa sổ bảo trì, monitor vẫn thu thập nhưng giữ lại các lỗi thuộc phạm vi đó, và bộ tự sửa không can thiệp. Cửa sổ tự hết hạn.</div>
+    </div>
+  </div>
 </main>
 
 <script>
 "use strict";
 var REFRESH_MS = 5000;
+var TOKEN = "__NETAUTO_TOKEN__";
 var $ = function (id) { return document.getElementById(id); };
 
 // Dữ liệu từ thiết bị (thông điệp lỗi...) chỉ được chèn bằng textContent, không bao giờ dạng HTML.
@@ -419,8 +465,80 @@ function refreshAudit() {
   });
 }
 
+
+function postJSON(path, body) {
+  return fetch(path, {method: "POST",
+    headers: {"Content-Type": "application/json", "X-NetAuto-Token": TOKEN},
+    body: JSON.stringify(body)
+  }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (data) {
+      if (!r.ok) throw new Error(data.detail ? String(data.detail) : "Lỗi " + r.status);
+      return data;
+    });
+  });
+}
+
+function fillNodes(select, allText) {
+  while (select.firstChild) select.removeChild(select.firstChild);
+  var all = el("option", "", allText); all.value = ""; select.appendChild(all);
+  return getJSON("/api/nodes").then(function (d) {
+    d.nodes.forEach(function (n) { var o = el("option", "", n); o.value = n; select.appendChild(o); });
+  });
+}
+
+function showOutput(res) {
+  $("act-meaning").textContent = "Mã thoát " + res.exit_code + ": " + res.meaning;
+  var out = $("act-out"); out.hidden = false; out.textContent = res.output || "(không có đầu ra)";
+}
+function showActionError(e) {
+  $("act-meaning").textContent = "Không thực hiện được: " + e.message;
+  $("act-out").hidden = true;
+}
+function busy(buttons, on) { buttons.forEach(function (id) { $(id).disabled = on; }); }
+var ACT_BUTTONS = ["btn-plan", "btn-apply", "btn-apply-yes"];
+
+function initActions() {
+  fillNodes($("act-node"), "Tất cả thiết bị");
+  fillNodes($("mt-node"), "Tất cả thiết bị");
+  $("btn-plan").addEventListener("click", function () {
+    busy(ACT_BUTTONS, true); $("act-meaning").textContent = "Đang lập kế hoạch...";
+    postJSON("/api/plan", {node: $("act-node").value || null}).then(showOutput).catch(showActionError)
+      .then(function () { busy(ACT_BUTTONS, false); });
+  });
+  $("btn-apply").addEventListener("click", function () {
+    var n = $("act-node").value;
+    $("apply-confirm-text").textContent = "Áp dụng thay đổi lên " + (n ? "thiết bị " + n : "TẤT CẢ thiết bị") +
+      "? Thao tác này thay đổi thiết bị thật.";
+    $("apply-confirm").hidden = false;
+  });
+  $("btn-apply-no").addEventListener("click", function () { $("apply-confirm").hidden = true; });
+  $("btn-apply-yes").addEventListener("click", function () {
+    $("apply-confirm").hidden = true;
+    busy(ACT_BUTTONS, true); $("act-meaning").textContent = "Đang áp dụng, có thể mất vài chục giây...";
+    postJSON("/api/apply", {node: $("act-node").value || null, confirm: true}).then(showOutput).catch(showActionError)
+      .then(function () { busy(ACT_BUTTONS, false); refresh(); });
+  });
+  $("btn-mt-open").addEventListener("click", function () {
+    postJSON("/api/maintenance/open", {nodes: $("mt-node").value || "*", reason: $("mt-reason").value,
+                                       ttl_s: parseInt($("mt-ttl").value, 10) || 0})
+      .then(function (d) { $("mt-result").textContent = "Đã mở cửa sổ bảo trì #" + d.window + "."; refresh(); })
+      .catch(function (e) { $("mt-result").textContent = "Không mở được: " + e.message; });
+  });
+  $("btn-mt-close").addEventListener("click", function () {
+    postJSON("/api/maintenance/close", {})
+      .then(function (d) {
+        $("mt-result").textContent = d.closed.length ? "Đã đóng cửa sổ: " + d.closed.map(function (i) { return "#" + i; }).join(", ")
+                                                    : "Không có cửa sổ nào đang mở.";
+        refresh();
+      })
+      .catch(function (e) { $("mt-result").textContent = "Không đóng được: " + e.message; });
+  });
+}
+
+function noRefresh() { return Promise.resolve(); }   // tab Thao tác không tự làm mới (giữ nguyên chữ đang nhập)
+
 var TABS = {overview: refreshOverview, incidents: refreshIncidents, fixes: refreshFixes,
-            measure: refreshMeasure, audit: refreshAudit};
+            measure: refreshMeasure, audit: refreshAudit, actions: noRefresh};
 
 function currentTab() {
   var name = (location.hash || "#overview").substr(1);
@@ -448,6 +566,7 @@ function refresh() {
 
 window.addEventListener("hashchange", function () { showTab(); refresh(); });
 $("only-open").addEventListener("change", refresh);
+initActions();
 showTab();
 refresh();
 setInterval(function () { if (!document.hidden) refresh(); }, REFRESH_MS);
