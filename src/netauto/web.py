@@ -7,10 +7,14 @@ Ngày 27A: chỉ có các đường dẫn GET. Chưa có thao tác ghi (apply, b
 nên mặc định chỉ lắng nghe trên 127.0.0.1 (máy này).
 """
 import argparse
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from netauto import db, webdata
+
+INDEX = Path(__file__).resolve().parent / "static" / "index.html"
 
 
 def create_app(db_path: str = db.DB_PATH) -> FastAPI:
@@ -24,6 +28,10 @@ def create_app(db_path: str = db.DB_PATH) -> FastAPI:
             return fn(conn, *args, **kwargs)
         finally:
             conn.close()
+
+    @app.get("/", include_in_schema=False)
+    def index():
+        return FileResponse(INDEX, media_type="text/html")
 
     @app.get("/api/status")
     def status():

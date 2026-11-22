@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetAuto - Tổng quan</title>
+<style>
+  :root {
+    --bg: #f4f6f8; --card: #ffffff; --ink: #1c2530; --muted: #5d6b7a; --line: #dde3e9;
+    --ok: #17803d; --ok-bg: #e3f4ea; --warn: #9a6700; --warn-bg: #fff3cd;
+    --bad: #b42318; --bad-bg: #fde7e4; --idle: #5d6b7a; --idle-bg: #e8ecf0; --accent: #1d5fd1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11161c; --card: #1a2129; --ink: #e6ebf0; --muted: #98a6b5; --line: #2b3541;
+      --ok: #4cc27a; --ok-bg: #173325; --warn: #e3b341; --warn-bg: #3a2f10;
+      --bad: #ff7b72; --bad-bg: #3d1a17; --idle: #98a6b5; --idle-bg: #232c36; --accent: #6ea1ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+           padding: 14px 20px; background: var(--card); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; margin: 0 8px 0 0; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px;
+          font-weight: 600; background: var(--idle-bg); color: var(--idle); }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad); }
+  .spacer { flex: 1; }
+  .muted { color: var(--muted); font-size: 13px; }
+  #banner { display: none; margin: 0 0 16px; padding: 10px 14px; border-radius: 8px;
+            background: var(--bad-bg); color: var(--bad); font-weight: 600; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+             color: var(--muted); margin: 0 0 8px; }
+  .big { font-size: 48px; font-weight: 700; line-height: 1.1; }
+  .big.ok { color: var(--ok); } .big.warn { color: var(--warn); } .big.bad { color: var(--bad); }
+  svg.spark { width: 100%; height: 56px; display: block; margin-top: 10px; }
+  section { margin-top: 24px; }
+  section h2 { font-size: 16px; margin: 0 0 8px; }
+  .tablewrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td.msg { white-space: normal; min-width: 220px; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  tr:last-child td { border-bottom: 0; }
+  .empty { padding: 16px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>NetAuto</h1>
+  <span id="monitor" class="pill">Monitor: ...</span>
+  <span id="maint" class="pill warn" hidden>Đang bảo trì</span>
+  <span id="breaker" class="pill bad" hidden>Cầu chì tự sửa đã ngắt</span>
+  <span class="spacer"></span>
+  <span id="updated" class="muted">Chưa có dữ liệu</span>
+</header>
+<main id="app">
+  <div id="banner">Mất kết nối tới API. Đang thử lại...</div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Điểm sức khỏe</h2>
+      <div id="score" class="big">-</div>
+      <div id="grade" class="muted">-</div>
+      <svg id="spark" class="spark" viewBox="0 0 300 56" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="card">
+      <h2>Sự cố đang mở</h2>
+      <div id="open" class="big">-</div>
+      <div id="flows" class="muted">-</div>
+    </div>
+    <div class="card">
+      <h2>Tự sửa gần nhất</h2>
+      <div id="lastfix" class="big" style="font-size:24px">-</div>
+      <div id="lastfix2" class="muted">-</div>
+    </div>
+  </div>
+
+  <section>
+    <h2>Sự cố đang mở</h2>
+    <div class="tablewrap" id="incidents"></div>
+  </section>
+
+  <section>
+    <h2>Lịch sử tự sửa (gần đây)</h2>
+    <div class="tablewrap" id="fixes"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+var REFRESH_MS = 5000;
+var $ = function (id) { return document.getElementById(id); };
+
+// Dữ liệu từ thiết bị (thông điệp lỗi...) chỉ được chèn bằng textContent, không bao giờ dạng HTML.
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = String(text);
+  return e;
+}
+function clock(iso) { return iso ? iso.substr(11, 8) : "-"; }
+function fmtAge(seconds) {
+  if (seconds < 60) return Math.round(seconds) + " giây";
+  if (seconds < 3600) return Math.floor(seconds / 60) + " phút " + Math.round(seconds % 60) + " giây";
+  return Math.floor(seconds / 3600) + " giờ " + Math.floor((seconds % 3600) / 60) + " phút";
+}
+function tone(grade) {
+  if (grade === "TỐT") return "ok";
+  if (grade === "CHÚ Ý") return "warn";
+  return "bad";
+}
+function getJSON(path) {
+  return fetch(path).then(function (r) {
+    if (!r.ok) throw new Error(path + " -> " + r.status);
+    return r.json();
+  });
+}
+
+function renderMonitor(m) {
+  var map = {
+    alive: ["Monitor: đang chạy", "ok"],
+    dead: ["Monitor: KHÔNG CÒN CHẠY (bị ngắt đột ngột)", "bad"],
+    stopped: ["Monitor: đã dừng", "warn"],
+    never: ["Monitor: chưa từng chạy", "warn"]
+  };
+  var v = map[m.state] || ["Monitor: ?", ""];
+  var p = $("monitor");
+  p.textContent = v[0];
+  p.className = "pill " + v[1];
+}
+
+function renderHealth(h, spark) {
+  var score = $("score");
+  if (!h) { score.textContent = "-"; score.className = "big"; $("grade").textContent = "chưa có dữ liệu"; }
+  else {
+    score.textContent = h.score;
+    score.className = "big " + tone(h.grade);
+    $("grade").textContent = h.grade;
+    $("flows").textContent = "Luồng mất kết nối: " + h.flows_down + ", chập chờn: " + h.flows_degraded +
+      " | Lỗi cấu hình: " + h.critical + " nghiêm trọng, " + h.warning + " cảnh báo";
+  }
+  drawSpark(spark);
+}
+
+function drawSpark(items) {
+  var svg = $("spark");
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  if (!items || items.length < 2) return;
+  var ns = "http://www.w3.org/2000/svg";
+  var pts = items.map(function (it, i) {
+    var x = (i / (items.length - 1)) * 300;
+    var y = 52 - (Math.max(0, Math.min(100, it.score)) / 100) * 48;
+    return x.toFixed(1) + "," + y.toFixed(1);
+  });
+  var line = document.createElementNS(ns, "polyline");
+  line.setAttribute("points", pts.join(" "));
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", "currentColor");
+  line.setAttribute("stroke-width", "2");
+  line.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.style.color = "var(--accent)";
+  svg.appendChild(line);
+}
+
+function table(container, headers, rows, emptyText) {
+  while (container.firstChild) container.removeChild(container.firstChild);
+  if (!rows.length) { container.appendChild(el("div", "empty", emptyText)); return; }
+  var t = el("table");
+  var thead = el("thead"), hr = el("tr");
+  headers.forEach(function (h) { hr.appendChild(el("th", "", h)); });
+  thead.appendChild(hr); t.appendChild(thead);
+  var tb = el("tbody");
+  rows.forEach(function (cells) {
+    var tr = el("tr");
+    cells.forEach(function (c) {
+      var td = el("td", c.cls || "");
+      if (c.node) td.appendChild(c.node); else td.textContent = c.text;
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); container.appendChild(t);
+}
+
+function pill(text, cls) { return el("span", "pill " + cls, text); }
+
+function renderIncidents(items, now) {
+  var nowMs = Date.parse(now);
+  table($("incidents"),
+    ["#", "Thiết bị", "Mức", "Loại", "Thông điệp", "Mở lúc", "Đã mở"],
+    items.map(function (i) {
+      var age = isNaN(nowMs) ? 0 : (nowMs - Date.parse(i.opened_at)) / 1000;
+      return [{text: i.id}, {text: i.node},
+              {node: pill(i.severity, i.severity === "critical" ? "bad" : "warn")},
+              {text: i.kind}, {text: i.message, cls: "msg"},
+              {text: clock(i.opened_at)}, {text: fmtAge(Math.max(0, age))}];
+    }),
+    "Không có sự cố nào đang mở.");
+}
+
+var OUTCOME_TONE = {fixed: "ok", refused: "", reset: "", rolled_back: "warn", ineffective: "warn", failed: "bad"};
+
+function renderFixes(items) {
+  var recent = items.slice(-10).reverse();
+  table($("fixes"),
+    ["#", "Lúc", "Sự cố", "Thiết bị", "Kết quả", "Mã thoát"],
+    recent.map(function (r) {
+      return [{text: r.id}, {text: clock(r.started_at)}, {text: "#" + r.incident_id},
+              {text: r.node}, {node: pill(r.outcome || "đang chạy", OUTCOME_TONE[r.outcome] || "")},
+              {text: r.exit_code === null || r.exit_code === undefined ? "-" : r.exit_code}];
+    }),
+    "Chưa có lần tự sửa nào.");
+  var last = items.length ? items[items.length - 1] : null;
+  if (last) {
+    $("lastfix").textContent = last.outcome || "đang chạy";
+    $("lastfix2").textContent = "Sự cố #" + last.incident_id + " trên " + last.node + " lúc " + clock(last.started_at);
+  } else {
+    $("lastfix").textContent = "-";
+    $("lastfix2").textContent = "Chưa có lần tự sửa nào";
+  }
+}
+
+function refresh() {
+  return Promise.all([
+    getJSON("/api/status"),
+    getJSON("/api/incidents?only_open=true&limit=50"),
+    getJSON("/api/health?limit=60"),
+    getJSON("/api/remediations?limit=10")
+  ]).then(function (r) {
+    var status = r[0], inc = r[1], hist = r[2], fix = r[3];
+    $("banner").style.display = "none";
+    renderMonitor(status.monitor);
+    renderHealth(status.health, hist.items);
+    $("open").textContent = status.open_incidents;
+    $("open").className = "big " + (status.open_incidents ? "bad" : "ok");
+    $("maint").hidden = !status.maintenance_active;
+    $("breaker").hidden = !status.breaker_open;
+    renderIncidents(inc.items, status.generated_at);
+    renderFixes(fix.items);
+    $("updated").textContent = "Cập nhật lúc " + clock(status.generated_at);
+  }).catch(function () {
+    $("banner").style.display = "block";
+  });
+}
+
+refresh();
+setInterval(function () { if (!document.hidden) refresh(); }, REFRESH_MS);
+</script>
+</body>
+</html>

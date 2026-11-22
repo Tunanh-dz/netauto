@@ -50,6 +50,12 @@ class TestApi(unittest.TestCase):
         r = self.client.get("/api/incidents?only_open=true")
         self.assertEqual(r.status_code, 200)
 
+    def test_root_serves_the_overview_page(self):
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("text/html", r.headers["content-type"])
+        self.assertIn("/api/status", r.text)
+
     def test_no_write_methods(self):
         for path in ("/api/status", "/api/incidents"):
             self.assertEqual(self.client.post(path).status_code, 405)

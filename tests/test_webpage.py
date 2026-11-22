@@ -1,0 +1,38 @@
+"""27B: trang tổng quan là một file HTML tĩnh. Kiểm tra những gì kiểm tra được mà không cần trình duyệt."""
+import re
+import unittest
+from pathlib import Path
+
+PAGE = Path(__file__).resolve().parent.parent / "src" / "netauto" / "static" / "index.html"
+
+
+class TestOverviewPage(unittest.TestCase):
+    def setUp(self):
+        self.html = PAGE.read_text(encoding="utf-8")
+
+    def test_page_exists_and_is_html(self):
+        self.assertTrue(self.html.lstrip().lower().startswith("<!doctype html>"))
+
+    def test_uses_the_read_only_api(self):
+        for path in ("/api/status", "/api/incidents", "/api/health", "/api/remediations"):
+            self.assertIn(path, self.html)
+
+    def test_works_offline_no_external_resources(self):
+        """Demo ở lớp học có thể không có Internet: không CDN, không font ngoài."""
+        self.assertEqual(re.findall(r"(?:src|href)=[\"']https?://", self.html), [])
+        self.assertNotIn("@import", self.html)
+        self.assertNotRegex(self.html, r"url\(\s*[\"']?https?://")
+
+    def test_device_text_is_never_inserted_as_html(self):
+        """Thông điệp lỗi đến từ thiết bị: chỉ được chèn bằng textContent, không innerHTML."""
+        self.assertNotIn("innerHTML", self.html)
+
+    def test_refreshes_itself(self):
+        self.assertIn("setInterval", self.html)
+
+    def test_shows_connection_problem(self):
+        self.assertIn("Mất kết nối", self.html)
+
+
+if __name__ == "__main__":
+    unittest.main()
