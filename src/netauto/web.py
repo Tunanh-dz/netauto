@@ -210,8 +210,11 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
         return query(webdata.maintenance_list, limit)
 
     @app.get("/api/audit")
-    def audit_list(limit: int | None = None):
-        return query(webdata.audit_list, limit)
+    def audit_list(limit: int | None = None, category: str | None = None):
+        try:
+            return query(webdata.audit_list, limit, category)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     @app.get("/api/audit/{entry_id}")
     def audit_detail(entry_id: int):

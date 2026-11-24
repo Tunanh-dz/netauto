@@ -127,8 +127,13 @@ AUDIT_COLS = ("id", "at", "actor", "result", "exit_code", "nodes", "prune", "dur
               "intent_sha", "hash")
 
 
-RESULT_TONE = {"THÀNH CÔNG": "ok", "CHƯA HỘI TỤ": "warn", "HOÀN TÁC": "warn", "TỪ CHỐI": "warn", "LỖI": "bad"}
+RESULT_TONE = {"THÀNH CÔNG": "ok", "CHƯA HỘI TỤ": "warn", "HOÀN TÁC": "warn", "TỪ CHỐI": "warn", "LỖI": "bad",
+               "ĐĂNG NHẬP": "ok", "ĐĂNG NHẬP SAI": "warn", "ĐĂNG NHẬP BỊ KHÓA": "bad"}
 ACTOR_KIND = {"netauto-remediation": "auto", "netauto-web": "web"}
+# 33F: tab Kiểm toán có hai phần. Đăng nhập là sự kiện về PHIÊN LÀM VIỆC; mọi thứ còn lại (áp dụng, bảo trì,
+# phòng ban, tài khoản...) là thao tác tác động vào hệ thống.
+LOGIN_RESULTS = ("ĐĂNG NHẬP", "ĐĂNG NHẬP SAI", "ĐĂNG NHẬP BỊ KHÓA")
+AUDIT_CATEGORIES = ("all", "login", "action")
 
 
 def audit_tone(result) -> str:
@@ -143,6 +148,18 @@ def actor_kind(actor) -> str:
     return ACTOR_KIND.get(actor, "manual")
 
 
+def audit_category(result) -> str:
+    """login = đăng nhập (đúng, sai, bị khóa); action = mọi bản ghi khác."""
+    return "login" if result in LOGIN_RESULTS else "action"
+
+
+def account_of(actor):
+    """Tên tài khoản web trong 'web:<tên>'; tác nhân khác (máy tự sửa, dòng lệnh) thì không có."""
+    if isinstance(actor, str) and actor.startswith("web:"):
+        return actor[4:]
+    return None
+
+
 def _audit_item(r) -> dict:
     try:
         detail = json.loads(r["detail"])
@@ -155,29 +172,46 @@ def _audit_item(r) -> dict:
     undo = detail.get("undo")
     return {**{k: r[k] for k in AUDIT_COLS}, "hash": r["hash"][:12],
             "tone": audit_tone(r["result"]), "actor_kind": actor_kind(r["actor"]),
+            "category": audit_category(r["result"]), "account": account_of(r["actor"]),
+            "role": detail.get("role") if isinstance(detail.get("role"), str) else None,
             "steps": {"done": count("XONG"), "exists": count("ĐÃ CÓ"), "failed": count("LỖI"), "total": len(steps)},
             "flows_before": detail.get("flows_before"), "flows_after": detail.get("flows_after"),
             "undo_count": len(undo) if isinstance(undo, list) else 0}
 
 
-def audit_list(conn, limit=None) -> dict:
-    """Nhật ký kiểm toán (mới nhất trước), kết quả kiểm tra chuỗi băm toàn bộ và thống kê trên MỌI bản ghi."""
+def audit_list(conn, limit=None, category=None) -> dict:
+    """Nhật ký kiểm toán (mới nhất trước), kết quả kiểm tra chuỗi băm toàn bộ và thống kê trên MỌI bản ghi.
+
+    `category`: None hoặc "all" = tất cả; "login" = chỉ đăng nhập; "action" = chỉ thao tác. Giới hạn `limit`
+    tính trong phạm vi của phần được chọn (đăng nhập nhiều không đẩy thao tác ra khỏi danh sách).
+    """
+    if category not in (None, *AUDIT_CATEGORIES):
+        raise ValueError(f"Loại nhật ký phải là một trong: {', '.join(AUDIT_CATEGORIES)}.")
+    marks = ",".join("?" * len(LOGIN_RESULTS))
+    where = {"login": f"WHERE result IN ({marks})", "action": f"WHERE result NOT IN ({marks})"}.get(category, "")
+    args = LOGIN_RESULTS if where else ()
     old, conn.row_factory = conn.row_factory, sqlite3.Row    # audit.verify đọc cột theo tên
     try:
         ok, bad_id, reason = audit.verify(conn)
-        rows = conn.execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?",
-                            (clamp_limit(limit),)).fetchall()
+        rows = conn.execute(f"SELECT * FROM audit {where} ORDER BY id DESC LIMIT ?",
+                            (*args, clamp_limit(limit))).fetchall()
         items = [_audit_item(r) for r in rows]
         by_result: dict = {}
         by_kind: dict = {}
+        by_category = {"login": 0, "action": 0}
+        accounts = set()
         for result, actor in conn.execute("SELECT result, actor FROM audit"):
             by_result[result] = by_result.get(result, 0) + 1
             kind = actor_kind(actor)
             by_kind[kind] = by_kind.get(kind, 0) + 1
+            by_category[audit_category(result)] += 1
+            if account_of(actor):
+                accounts.add(account_of(actor))
     finally:
         conn.row_factory = old
     return {"items": items, "chain": {"ok": ok, "bad_id": bad_id, "reason": reason},
-            "summary": {"total": sum(by_result.values()), "by_result": by_result, "by_actor_kind": by_kind}}
+            "summary": {"total": sum(by_result.values()), "by_result": by_result, "by_actor_kind": by_kind,
+                        "by_category": by_category, "accounts": sorted(accounts)}}
 
 
 def audit_detail(conn, entry_id: int):

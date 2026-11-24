@@ -2,3 +2,4 @@ clab-*/
 __pycache__/
 .venv/
 data/
+*.bak-*

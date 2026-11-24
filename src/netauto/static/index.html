@@ -486,6 +486,10 @@
 
   <div id="tab-audit" class="panel" hidden>
     <div id="au-banner" class="aubanner"></div>
+    <div class="subnav" id="au-subnav" role="tablist" aria-label="Loại nhật ký">
+      <button class="subbtn" role="tab" data-view="action" aria-selected="true"><b>Thao tác</b><span id="au-count-action">áp dụng, tự sửa, bảo trì, phòng ban, tài khoản</span></button>
+      <button class="subbtn" role="tab" data-view="login" aria-selected="false"><b>Đăng nhập</b><span id="au-count-login">ai đăng nhập, đăng nhập sai, bị khóa</span></button>
+    </div>
     <div id="au-kpis" class="evkpis"></div>
     <div class="evfilters" id="au-filters"></div>
     <div id="au-list"></div>
@@ -1129,7 +1133,9 @@ function refreshMeasure() {
 }
 
 var ACTOR_NAME = {auto: "Máy tự sửa", web: "Giao diện web", manual: "Dòng lệnh"};
-var auState = {data: null, result: "all", actor: "all", expanded: {}, detail: {}};
+var auState = {data: null, view: "action", result: "all", actor: "all", account: "all", expanded: {}, detail: {}};
+var LOGIN_RESULTS = ["ĐĂNG NHẬP", "ĐĂNG NHẬP SAI", "ĐĂNG NHẬP BỊ KHÓA"];
+var AU_HELP = {action: "áp dụng, tự sửa, bảo trì, phòng ban, tài khoản", login: "ai đăng nhập, đăng nhập sai, bị khóa"};
 
 function stepStatusClass(st) { return st === "XONG" ? "done" : st === "LỖI" ? "failed" : "exists"; }
 var RESULT_HELP = {
@@ -1249,16 +1255,28 @@ function renderAudit() {
   txt.appendChild(el("span", "sub", good ? "Đã kiểm tra " + d.summary.total + " bản ghi: không có bản ghi nào bị sửa hay xóa."
                                          : "Lý do: " + d.chain.reason + ". Nhật ký không còn đáng tin từ bản ghi này."));
   ban.appendChild(txt);
-  var sm = d.summary, br = sm.by_result;
+  var sm = d.summary, br = sm.by_result, cat = sm.by_category || {login: 0, action: 0};
+  var login = auState.view === "login";
+  ["action", "login"].forEach(function (v) { $("au-count-" + v).textContent = cat[v] + " bản ghi · " + AU_HELP[v]; });
   var box = $("au-kpis"); clear(box);
-  box.appendChild(kpi("Tổng bản ghi", sm.total, "mọi lần apply, tự sửa, bảo trì"));
-  box.appendChild(kpi("Thành công", br["THÀNH CÔNG"] || 0, "đã đưa mạng về đúng intent"));
-  var attention = 0; Object.keys(br).forEach(function (k) { if (["LỖI", "HOÀN TÁC", "CHƯA HỘI TỤ", "TỪ CHỐI"].indexOf(k) >= 0) attention += br[k]; });
-  box.appendChild(kpi("Cần chú ý", attention, "lỗi, hoàn tác, chưa hội tụ, từ chối"));
-  box.appendChild(kpi("Do máy tự sửa", sm.by_actor_kind.auto || 0, "ghi bởi netauto-remediation"));
+  if (login) {
+    box.appendChild(kpi("Đăng nhập thành công", br["ĐĂNG NHẬP"] || 0, "số lần vào giao diện web"));
+    box.appendChild(kpi("Đăng nhập sai", br["ĐĂNG NHẬP SAI"] || 0, "sai tên hoặc sai mật khẩu"));
+    box.appendChild(kpi("Bị khóa", br["ĐĂNG NHẬP BỊ KHÓA"] || 0, "thử vào khi tài khoản đang bị khóa"));
+    box.appendChild(kpi("Tài khoản", (sm.accounts || []).length, "đã xuất hiện trong nhật ký"));
+  } else {
+    box.appendChild(kpi("Tổng thao tác", cat.action, "áp dụng, tự sửa, bảo trì, phòng ban, tài khoản"));
+    box.appendChild(kpi("Thành công", br["THÀNH CÔNG"] || 0, "đã đưa mạng về đúng intent"));
+    var attention = 0; Object.keys(br).forEach(function (k) { if (["LỖI", "HOÀN TÁC", "CHƯA HỘI TỤ", "TỪ CHỐI"].indexOf(k) >= 0) attention += br[k]; });
+    box.appendChild(kpi("Cần chú ý", attention, "lỗi, hoàn tác, chưa hội tụ, từ chối"));
+    box.appendChild(kpi("Do máy tự sửa", sm.by_actor_kind.auto || 0, "ghi bởi netauto-remediation"));
+  }
   var f = $("au-filters"); clear(f);
-  var results = Object.keys(br).sort();
-  [["Kết quả", "result", results, null], ["Người thực hiện", "actor", ["auto", "web", "manual"], ACTOR_NAME]].forEach(function (c) {
+  var results = login ? LOGIN_RESULTS : Object.keys(br).filter(function (k) { return LOGIN_RESULTS.indexOf(k) < 0; }).sort();
+  var filters = [["Kết quả", "result", results, null]];
+  if (!login) filters.push(["Người thực hiện", "actor", ["auto", "web", "manual"], ACTOR_NAME]);
+  filters.push(["Tài khoản", "account", sm.accounts || [], null]);
+  filters.forEach(function (c) {
     var wrap = el("label", "evsel", c[0] + " "), sel = el("select");
     sel.setAttribute("aria-label", c[0]);
     [["all", "Tất cả"]].concat(c[2].map(function (v) { return [v, (c[3] && c[3][v]) || v]; })).forEach(function (o) {
@@ -1270,13 +1288,43 @@ function renderAudit() {
   });
   var list = $("au-list"); clear(list);
   var shown = d.items.filter(function (r) {
-    return (auState.result === "all" || r.result === auState.result) && (auState.actor === "all" || r.actor_kind === auState.actor);
+    return (auState.result === "all" || r.result === auState.result) && (auState.actor === "all" || r.actor_kind === auState.actor)
+      && (auState.account === "all" || r.account === auState.account);
   });
-  if (!shown.length) list.appendChild(el("div", "muted", d.items.length ? "Không có bản ghi nào khớp bộ lọc." : "Chưa có bản ghi kiểm toán."));
-  shown.forEach(function (r) { list.appendChild(auditCard(r)); });
+  var none = d.items.length ? "Không có bản ghi nào khớp bộ lọc." : (login ? "Chưa có lần đăng nhập nào." : "Chưa có thao tác nào.");
+  if (!shown.length) list.appendChild(el("div", "muted", none));
+  else if (login) renderLoginTable(list, shown);
+  else shown.forEach(function (r) { list.appendChild(auditCard(r)); });
+}
+function renderLoginTable(box, rows) {
+  var wrap = el("div", "tablewrap"), t = el("table"), head = el("tr");
+  ["Thời gian", "Tài khoản", "Kết quả", "Vai trò"].forEach(function (h) { head.appendChild(el("th", "", h)); });
+  var thead = el("thead"); thead.appendChild(head); t.appendChild(thead);
+  var tb = el("tbody");
+  rows.forEach(function (r) {
+    var tr = el("tr");
+    tr.appendChild(el("td", "", stamp(r.at)));
+    tr.appendChild(el("td", "", r.account || "?"));
+    var res = el("td"); res.appendChild(el("span", "tag au-" + r.tone, r.result)); tr.appendChild(res);
+    tr.appendChild(el("td", "", ROLE_VN[r.role] || "-"));
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); wrap.appendChild(t); box.appendChild(wrap);
+}
+function auChooseView(view) {
+  auState.view = view; auState.result = "all"; auState.actor = "all"; auState.account = "all"; auState.data = null;
+  Array.prototype.forEach.call(document.querySelectorAll("#au-subnav .subbtn"), function (b) {
+    b.setAttribute("aria-selected", b.getAttribute("data-view") === view ? "true" : "false");
+  });
+  clear($("au-list")); clear($("au-kpis")); clear($("au-filters"));
+  refreshAudit().catch(function () { $("banner").style.display = "block"; });
 }
 function refreshAudit() {
-  return getJSON("/api/audit?limit=100").then(function (d) { auState.data = d; renderAudit(); });
+  var view = auState.view;
+  return getJSON("/api/audit?limit=100&category=" + view).then(function (d) {
+    if (view !== auState.view) return;               // người dùng đã chuyển sang phần khác trong lúc chờ
+    auState.data = d; renderAudit();
+  });
 }
 
 
@@ -2075,6 +2123,9 @@ initTheme();
 initActions();
 initActionNav();
 initAuth();
+Array.prototype.forEach.call(document.querySelectorAll("#au-subnav .subbtn"), function (b) {
+  b.addEventListener("click", function () { auChooseView(b.getAttribute("data-view")); });
+});
 $("btn-cf-reload").addEventListener("click", function () { refreshConfig(); });
 Array.prototype.forEach.call(document.querySelectorAll("#cf-subnav .subbtn"), function (b) {
   b.addEventListener("click", function () { cfChooseView(b.getAttribute("data-view")); });
