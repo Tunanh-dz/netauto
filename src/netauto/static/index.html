@@ -383,6 +383,13 @@ function el(tag, cls, text) {
   return e;
 }
 function clock(iso) { return iso ? iso.substr(11, 8) : "-"; }
+function two(n) { return ("0" + n).slice(-2); }
+// Giờ kèm ngày ('10:00:53 24/11'): dữ liệu của nhiều ngày nằm chung một bảng, chỉ có giờ thì đọc nhầm.
+function stampMs(ms) {
+  var d = new Date(ms);
+  return two(d.getHours()) + ":" + two(d.getMinutes()) + ":" + two(d.getSeconds()) + " " + two(d.getDate()) + "/" + two(d.getMonth() + 1);
+}
+function stamp(iso) { return iso ? stampMs(Date.parse(iso)) : "-"; }
 function fmtAge(seconds) {
   if (seconds < 60) return Math.round(seconds) + " giây";
   if (seconds < 3600) return Math.floor(seconds / 60) + " phút " + Math.round(seconds % 60) + " giây";
@@ -478,7 +485,7 @@ function renderIncidents(items, now) {
       return [{text: i.id}, {text: i.node},
               {node: pill(i.severity, i.severity === "critical" ? "bad" : "warn")},
               {text: i.kind}, {text: i.message, cls: "msg"},
-              {text: clock(i.opened_at)}, {text: fmtAge(Math.max(0, age))}];
+              {text: stamp(i.opened_at)}, {text: fmtAge(Math.max(0, age))}];
     }),
     "Không có sự cố nào đang mở.");
 }
@@ -490,7 +497,7 @@ function renderFixes(items) {
   table($("fixes"),
     ["#", "Lúc", "Sự cố", "Thiết bị", "Kết quả", "Mã thoát"],
     recent.map(function (r) {
-      return [{text: r.id}, {text: clock(r.started_at)}, {text: "#" + r.incident_id},
+      return [{text: r.id}, {text: stamp(r.started_at)}, {text: "#" + r.incident_id},
               {text: r.node}, {node: pill(r.outcome || "đang chạy", OUTCOME_TONE[r.outcome] || "")},
               {text: r.exit_code === null || r.exit_code === undefined ? "-" : r.exit_code}];
     }),
@@ -498,7 +505,7 @@ function renderFixes(items) {
   var last = items.length ? items[items.length - 1] : null;
   if (last) {
     $("lastfix").textContent = last.outcome || "đang chạy";
-    $("lastfix2").textContent = "Sự cố #" + last.incident_id + " trên " + last.node + " lúc " + clock(last.started_at);
+    $("lastfix2").textContent = "Sự cố #" + last.incident_id + " trên " + last.node + " lúc " + stamp(last.started_at);
   } else {
     $("lastfix").textContent = "-";
     $("lastfix2").textContent = "Chưa có lần tự sửa nào";
@@ -672,8 +679,8 @@ function refreshIncidents() {
         var root = i.root_id && i.root_id !== i.id ? "triệu chứng của #" + i.root_id : "gốc";
         return [{text: i.id}, {text: i.node},
                 {node: pill(i.severity, i.severity === "critical" ? "bad" : "warn")},
-                {text: i.kind}, {text: i.message, cls: "msg"}, {text: clock(i.opened_at)},
-                {text: clock(i.closed_at)}, {text: dur},
+                {text: i.kind}, {text: i.message, cls: "msg"}, {text: stamp(i.opened_at)},
+                {text: stamp(i.closed_at)}, {text: dur},
                 {text: i.closed_at ? (CLOSE_REASON[i.close_reason] || i.close_reason || "-") : "-"},
                 {text: root}];
       }),
@@ -690,7 +697,7 @@ function refreshFixes() {
       ["#", "Bắt đầu", "Kết thúc", "Thời gian", "Sự cố", "Thiết bị", "Loại lỗi", "Kết quả", "Mã", "Kiểm toán"],
       d.items.slice().reverse().map(function (r) {
         var took = r.finished_at ? fmtAge(Math.max(0, secondsBetween(r.started_at, r.finished_at))) : "-";
-        return [{text: r.id}, {text: clock(r.started_at)}, {text: clock(r.finished_at)}, {text: took},
+        return [{text: r.id}, {text: stamp(r.started_at)}, {text: stamp(r.finished_at)}, {text: took},
                 {text: "#" + r.incident_id}, {text: r.node}, {text: r.check_code},
                 {node: pill(r.outcome || "đang chạy", OUTCOME_TONE[r.outcome] || "")},
                 {text: r.exit_code === null || r.exit_code === undefined ? "-" : r.exit_code},
@@ -721,7 +728,7 @@ function refreshMeasure() {
     table($("inj-all"),
       ["#", "Lỗi", "Gây lúc", "Kết quả", "Thấy lỗi sau", "Cảnh báo sau", "Sửa xong sau", "Chế độ"],
       d.items.map(function (r) {
-        return [{text: r.id}, {text: r.fault}, {text: clock(r.injected_at)}, {text: r.status},
+        return [{text: r.id}, {text: r.fault}, {text: stamp(r.injected_at)}, {text: r.status},
                 {text: num(r.observed_seconds) + " giây"}, {text: num(r.seconds) + " giây"},
                 {text: r.fix_seconds === null || r.fix_seconds === undefined ? "-" : num(r.fix_seconds) + " giây"},
                 {text: r.mode}];
@@ -766,7 +773,7 @@ function refreshAudit() {
     table($("audit-all"),
       ["#", "Lúc", "Người", "Kết quả", "Mã", "Thiết bị", "Giây", "Intent", "Băm"],
       d.items.map(function (r) {
-        return [{text: r.id}, {text: r.at.substr(0, 10) + " " + clock(r.at)}, {text: r.actor}, {text: r.result},
+        return [{text: r.id}, {text: stamp(r.at)}, {text: r.actor}, {text: r.result},
                 {text: r.exit_code}, {text: r.nodes}, {text: num(r.duration_s)}, {text: r.intent_sha}, {text: r.hash}];
       }),
       "Chưa có bản ghi kiểm toán.",
@@ -982,10 +989,13 @@ function showTip(evt, head, lines) {
 function hideTip() { if (tipEl) tipEl.hidden = true; }
 
 function hhmm(ms) { var d = new Date(ms); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
-function hhmmss(ms) { return hhmm(ms) + ":" + ("0" + new Date(ms).getSeconds()).slice(-2); }
 function clear(svg) { while (svg.firstChild) svg.removeChild(svg.firstChild); }
 
 // Khung chung: lề, thang thời gian, trục thời gian (5 mốc), lưới ngang. Trả về các hàm đổi toạ độ.
+function axisLabel(ms, spanMs) {
+  return spanMs > 6 * 3600 * 1000 ? two(new Date(ms).getDate()) + "/" + two(new Date(ms).getMonth() + 1) + " " + hhmm(ms) : hhmm(ms);
+}
+
 function frame(svg, from, to, yMin, yMax, yTicks, opts) {
   var vb = svg.viewBox.baseVal, W = vb.width, H = vb.height;
   var L = (opts && opts.left) || 40, R = 14, T = 10, B = 24;
@@ -997,7 +1007,7 @@ function frame(svg, from, to, yMin, yMax, yTicks, opts) {
   });
   for (var i = 0; i <= 4; i++) {
     var ms = from + (to - from) * i / 4;
-    svg.appendChild(svgEl("text", {x: fx(ms), y: H - 6, "text-anchor": i === 0 ? "start" : (i === 4 ? "end" : "middle")}, hhmm(ms)));
+    svg.appendChild(svgEl("text", {x: fx(ms), y: H - 6, "text-anchor": i === 0 ? "start" : (i === 4 ? "end" : "middle")}, axisLabel(ms, to - from)));
   }
   svg.appendChild(svgEl("line", {x1: L, x2: W - R, y1: H - B, y2: H - B, "class": "axis"}));
   return {fx: fx, fy: fy, L: L, R: R, T: T, B: B, W: W, H: H};
@@ -1034,7 +1044,7 @@ function lineChart(svg, from, to, pts, o) {
     pts.forEach(function (p) { var dx = Math.abs(f.fx(p.t) - x); if (dx < bd) { bd = dx; best = p; } });
     hair.setAttribute("x1", f.fx(best.t)); hair.setAttribute("x2", f.fx(best.t)); hair.style.display = "";
     dot.setAttribute("cx", f.fx(best.t)); dot.setAttribute("cy", f.fy(best.v || 0)); dot.style.display = "";
-    showTip(evt, best.v === null ? "không có RTT" : o.fmt(best.v), [hhmmss(best.t)].concat(best.extra || []));
+    showTip(evt, best.v === null ? "không có RTT" : o.fmt(best.v), [stampMs(best.t)].concat(best.extra || []));
   }
   hit.addEventListener("pointermove", at);
   hit.addEventListener("pointerleave", function () { hair.style.display = "none"; dot.style.display = "none"; hideTip(); });
@@ -1079,7 +1089,7 @@ function drawTimeline(d) {
     var bar = svgEl("rect", {x: x0, y: y, width: w, height: rowH - 8, rx: 4, "class": "bar-" + (i.severity === "critical" ? "critical" : "warning"), tabindex: 0});
     var show = function (evt) {
       showTip(evt, "#" + i.id + " " + i.node + " (" + (i.severity === "critical" ? "nghiêm trọng" : "cảnh báo") + ")",
-        [i.message, "Mở " + hhmmss(msOf(i.opened_at)) + (i.closed_at ? ", đóng " + hhmmss(msOf(i.closed_at)) : ", còn mở"),
+        [i.message, "Mở " + stamp(i.opened_at) + (i.closed_at ? ", đóng " + stamp(i.closed_at) : ", còn mở"),
          i.root_id ? "Triệu chứng của #" + i.root_id : "Sự cố gốc"]);
     };
     bar.addEventListener("pointermove", show); bar.addEventListener("pointerleave", hideTip);
@@ -1106,7 +1116,7 @@ function drawBuckets(d) {
     if (b.warning) { svg.appendChild(svgEl("rect", {x: x, y: y - hc - hw - (b.critical ? 2 : 0), width: w, height: hw, rx: 3, "class": "bar-warning"})); }
     var hit = svgEl("rect", {x: f.L + i * cw, y: f.T, width: cw, height: f.H - f.T - f.B, fill: "transparent", tabindex: 0});
     var show = function (evt) {
-      showTip(evt, hhmm(msOf(b.start)) + " – " + hhmm(msOf(b.start) + (to - from) / d.buckets.length),
+      showTip(evt, stampMs(msOf(b.start)) + " – " + hhmm(msOf(b.start) + (to - from) / d.buckets.length),
         ["Nghiêm trọng: " + b.critical, "Cảnh báo: " + b.warning]);
     };
     hit.addEventListener("pointermove", show); hit.addEventListener("pointerleave", hideTip);
@@ -1143,7 +1153,7 @@ function drawTable(d) {
   table($("chart-table"), ["#", "Thiết bị", "Mức", "Thông điệp", "Mở lúc", "Đóng lúc"],
     d.incidents.slice().reverse().map(function (i) {
       return [{text: i.id}, {text: i.node}, {node: pill(i.severity, i.severity === "critical" ? "bad" : "warn")},
-              {text: i.message, cls: "msg"}, {text: hhmmss(msOf(i.opened_at))}, {text: i.closed_at ? hhmmss(msOf(i.closed_at)) : "còn mở"}];
+              {text: i.message, cls: "msg"}, {text: stamp(i.opened_at)}, {text: i.closed_at ? stamp(i.closed_at) : "còn mở"}];
     }), "Không có sự cố nào trong khoảng này.");
 }
 
@@ -1152,7 +1162,7 @@ function refreshCharts() {
   Array.prototype.forEach.call(cards, function (c) { c.classList.add("loading"); });
   return getJSON("/api/history?range=" + chartRange).then(function (d) {
     drawHealth(d); drawTimeline(d); drawBuckets(d); drawFlows(d); drawTable(d);
-    $("chart-meta").textContent = hhmmss(msOf(d.from)) + " – " + hhmmss(msOf(d.to)) + " · " + d.incidents.length + " sự cố";
+    $("chart-meta").textContent = stamp(d.from) + " – " + stamp(d.to) + " · " + d.incidents.length + " sự cố";
   }).then(function () {
     Array.prototype.forEach.call(cards, function (c) { c.classList.remove("loading"); });
   }, function (e) {
