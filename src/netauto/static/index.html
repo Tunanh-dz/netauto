@@ -72,6 +72,22 @@
   .confirmbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; padding: 10px 14px;
                 border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-weight: 600; }
   .num { font-size: 28px; font-weight: 700; line-height: 1.2; }
+  /* 29A: sơ đồ mạng. Trạng thái luôn có chữ hoặc nét đứt đi kèm, không chỉ dựa vào màu. */
+  .st-ok { --c: var(--ok); --cbg: var(--ok-bg); }
+  .st-warn { --c: var(--warn); --cbg: var(--warn-bg); }
+  .st-bad { --c: var(--bad); --cbg: var(--bad-bg); }
+  svg.map { width: 100%; height: auto; display: block; background: var(--card);
+            border: 1px solid var(--line); border-radius: 12px; }
+  .maplink { stroke: var(--c); stroke-width: 3; fill: none; }
+  .maplink.st-bad { stroke-dasharray: 7 5; }
+  .mapnode { cursor: pointer; }
+  .mapnode rect { fill: var(--cbg); stroke: var(--c); stroke-width: 2; }
+  .mapnode.sel rect { stroke-width: 4; }
+  .mapnode text { fill: var(--ink); font: 600 13px system-ui, sans-serif; text-anchor: middle; }
+  .mapnode text.sub { font: 11px system-ui, sans-serif; fill: var(--muted); }
+  .maplabel { fill: var(--muted); font: 10px ui-monospace, Consolas, monospace; text-anchor: middle; }
+  .layerlabel { fill: var(--muted); font: 600 11px system-ui, sans-serif; text-transform: uppercase; }
+  .notice { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -79,6 +95,7 @@
   <h1>NetAuto</h1>
   <nav id="nav">
     <a href="#overview" data-tab="overview">Tổng quan</a>
+    <a href="#map" data-tab="map">Sơ đồ</a>
     <a href="#incidents" data-tab="incidents">Sự cố</a>
     <a href="#fixes" data-tab="fixes">Tự sửa</a>
     <a href="#measure" data-tab="measure">Đo lường</a>
@@ -123,6 +140,21 @@
     <h2>Lịch sử tự sửa (gần đây)</h2>
     <div class="tablewrap" id="fixes"></div>
   </section>
+  </div>
+
+  <div id="tab-map" class="panel" hidden>
+    <div id="map-notice" class="notice" hidden></div>
+    <div class="toolbar">
+      <span class="pill ok">Bình thường</span><span class="pill warn">Cảnh báo</span>
+      <span class="pill bad">Lỗi (liên kết lỗi vẽ nét đứt)</span>
+      <span class="muted">Bấm vào một thiết bị để xem chi tiết. Sơ đồ tự làm mới mỗi 5 giây.</span>
+    </div>
+    <svg id="map" class="map" viewBox="0 0 760 420" role="img" aria-label="Sơ đồ mạng"></svg>
+    <div id="map-detail"></div>
+    <section>
+      <h2>Các luồng được đo</h2>
+      <div class="tablewrap" id="map-flows"></div>
+    </section>
   </div>
 
   <div id="tab-incidents" class="panel" hidden>
@@ -535,9 +567,121 @@ function initActions() {
   });
 }
 
+// ---- 29A: sơ đồ mạng (SVG dựng bằng createElementNS và textContent)
+var SVGNS = "http://www.w3.org/2000/svg";
+var mapData = null;
+var mapSel = null;
+var LAYER_Y = {router: 70, switch: 205, host: 345};
+var LAYER_NAME = {router: "Router", switch: "Switch", host: "Máy trạm"};
+var NODE_W = 112, NODE_H = 46, MAP_W = 760;
+var STATE_TEXT = {ok: "bình thường", warn: "cảnh báo", bad: "lỗi"};
+var FLOW_TEXT = {ok: "tốt", degraded: "chập chờn/chậm", down: "mất kết nối", unknown: "chưa có số đo"};
+
+function svgEl(tag, attrs, text) {
+  var e = document.createElementNS(SVGNS, tag);
+  Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+// Xếp thiết bị theo tầng; trong tầng sắp theo thiết bị phía trên mà nó nối vào, để đường nối ít cắt nhau.
+function layoutMap(d) {
+  var byName = {};
+  d.nodes.forEach(function (n) { byName[n.name] = n; });
+  var order = {};
+  ["router", "switch", "host"].forEach(function (role) {
+    var items = d.nodes.filter(function (n) { return n.role === role; });
+    function key(n) {
+      var best = 999;
+      d.links.forEach(function (l) {
+        var other = l.a === n.name ? l.b : (l.b === n.name ? l.a : null);
+        if (other && byName[other].role !== role && order[other] !== undefined) best = Math.min(best, order[other]);
+      });
+      return best;
+    }
+    items.sort(function (x, y) { return key(x) - key(y) || (x.name < y.name ? -1 : 1); });
+    items.forEach(function (n, i) {
+      n.x = MAP_W * (i + 0.5) / items.length;
+      n.y = LAYER_Y[role];
+      order[n.name] = n.x;
+    });
+  });
+  return byName;
+}
+
+function drawMap(d) {
+  var svg = $("map");
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  var byName = layoutMap(d);
+  Object.keys(LAYER_Y).forEach(function (role) {
+    svg.appendChild(svgEl("text", {x: 8, y: LAYER_Y[role] - 36, "class": "layerlabel"}, LAYER_NAME[role]));
+  });
+  d.links.forEach(function (l) {
+    var a = byName[l.a], b = byName[l.b];
+    var g = svgEl("g", {"class": "st-" + l.status});
+    g.appendChild(svgEl("line", {x1: a.x, y1: a.y, x2: b.x, y2: b.y, "class": "maplink st-" + l.status}));
+    var t = 0.2;     // nhãn cổng đặt gần mỗi đầu để không đè lên nhau
+    g.appendChild(svgEl("text", {x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t - 4, "class": "maplabel"}, l.a_port));
+    g.appendChild(svgEl("text", {x: b.x + (a.x - b.x) * t, y: b.y + (a.y - b.y) * t - 4, "class": "maplabel"}, l.b_port));
+    svg.appendChild(g);
+  });
+  d.nodes.forEach(function (n) {
+    var g = svgEl("g", {"class": "mapnode st-" + n.status + (n.name === mapSel ? " sel" : ""), tabindex: 0});
+    g.appendChild(svgEl("rect", {x: n.x - NODE_W / 2, y: n.y - NODE_H / 2, width: NODE_W, height: NODE_H, rx: 10}));
+    g.appendChild(svgEl("text", {x: n.x, y: n.y - 3}, n.name));
+    g.appendChild(svgEl("text", {x: n.x, y: n.y + 13, "class": "sub"}, STATE_TEXT[n.status] || n.status));
+    var pick = function () { mapSel = n.name; drawMap(mapData); showNodeDetail(n.name); };
+    g.addEventListener("click", pick);
+    g.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") pick(); });
+    svg.appendChild(g);
+  });
+}
+
+function showNodeDetail(name) {
+  var box = $("map-detail");
+  while (box.firstChild) box.removeChild(box.firstChild);
+  var n = null;
+  mapData.nodes.forEach(function (x) { if (x.name === name) n = x; });
+  if (!n) return;
+  var det = el("div", "detail");
+  det.appendChild(el("h3", "", n.name + " (" + LAYER_NAME[n.role].toLowerCase() + ")"));
+  det.appendChild(el("div", "muted", n.info));
+  det.appendChild(el("div", "", "Trạng thái: " + (STATE_TEXT[n.status] || n.status)));
+  if (n.incidents.length) {
+    var ul = el("ul", "");
+    n.incidents.forEach(function (i) {
+      ul.appendChild(el("li", "", "#" + i.id + " [" + i.severity + "] " + i.message));
+    });
+    det.appendChild(ul);
+  } else {
+    det.appendChild(el("div", "muted", "Không có sự cố đang mở."));
+  }
+  box.appendChild(det);
+}
+
+function refreshMap() {
+  return getJSON("/api/topology").then(function (d) {
+    mapData = d;
+    var notice = $("map-notice");
+    notice.hidden = d.links_source === "lab";
+    if (d.links_source !== "lab") {
+      notice.textContent = "Không đọc được lab/topology.clab.yml (" + d.links_source + "): chỉ vẽ thiết bị, chưa có đường nối. " +
+        "Hãy chạy máy chủ web từ thư mục gốc của dự án.";
+    }
+    drawMap(d);
+    if (mapSel) showNodeDetail(mapSel);
+    table($("map-flows"), ["Luồng", "Trạng thái", "Mất gói", "RTT TB (ms)"],
+      d.flows.map(function (f) {
+        var tone = f.state === "ok" ? "ok" : (f.state === "unknown" ? "" : (f.state === "degraded" ? "warn" : "bad"));
+        return [{text: f.src + " → " + f.dst}, {node: pill(FLOW_TEXT[f.state] || f.state, tone)},
+                {text: f.loss_pct === null ? "-" : num(f.loss_pct, 0) + "%"}, {text: num(f.rtt_avg, 2)}];
+      }), "Intent chưa khai báo luồng nào.");
+  });
+}
+
 function noRefresh() { return Promise.resolve(); }   // tab Thao tác không tự làm mới (giữ nguyên chữ đang nhập)
 
-var TABS = {overview: refreshOverview, incidents: refreshIncidents, fixes: refreshFixes,
+var TABS = {overview: refreshOverview, map: refreshMap, incidents: refreshIncidents, fixes: refreshFixes,
             measure: refreshMeasure, audit: refreshAudit, actions: noRefresh};
 
 function currentTab() {

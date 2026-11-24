@@ -5,11 +5,15 @@ dùng lại đúng các hàm mà dòng lệnh đang dùng, không viết lại l
 Mọi giá trị trả về đều chuyển được sang JSON.
 """
 import json
+import re
 import sqlite3
+from types import SimpleNamespace
+
+import yaml
 
 from netauto import intent as intent_mod
-from netauto import (audit, db, health, incidents, injections, maintenance, remediation, runs,
-                     service)
+from netauto import (audit, db, health, incidents, injections, maintenance, probe, remediation,
+                     runs, service)
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
@@ -34,6 +38,7 @@ def ensure_all(conn) -> None:
     runs.ensure_schema(conn)
     service.ensure_schema(conn)
     injections.ensure_schema(conn)
+    probe.ensure_schema(conn)
     conn.executescript(audit.SCHEMA)
 
 
@@ -120,3 +125,100 @@ def node_names(intent_path: str | None = None) -> list[str]:
     """Tên mọi thiết bị trong intent (router, switch, host), theo thứ tự cố định."""
     data = intent_mod.load_intent(intent_path or intent_mod.INTENT_PATH)
     return sorted([*data["routers"], *data["switches"], *data["hosts"]])
+
+
+# ---------------------------------------------------------------- 29A: sơ đồ mạng
+LAB_PATH = "lab/topology.clab.yml"
+ROLES = (("routers", "router"), ("switches", "switch"), ("hosts", "host"))
+SEVERITY_RANK = {"warning": 1, "critical": 2}
+STATUS_OF_RANK = {0: "ok", 1: "warn", 2: "bad"}
+
+
+def port_mentioned(message, port: str) -> bool:
+    """Thông điệp lỗi có nhắc tới cổng này không? 'eth1.10' tính là eth1, 'eth10' thì không."""
+    return re.search(rf"(?<!\w){re.escape(port)}(?!\d)", message or "") is not None
+
+
+def lab_links(lab_path: str = LAB_PATH):
+    """Các liên kết vật lý đọc từ file lab: ([((nút, cổng), (nút, cổng)), ...], nguồn).
+    nguồn = 'lab' | 'missing' (không có file) | 'invalid' (file sai dạng)."""
+    try:
+        with open(lab_path, encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh)
+    except OSError:
+        return [], "missing"
+    except yaml.YAMLError:
+        return [], "invalid"
+    try:
+        links = []
+        for item in raw["topology"]["links"]:
+            (a, pa), (b, pb) = (e.split(":", 1) for e in item["endpoints"])
+            links.append(((a, pa), (b, pb)))
+        return links, "lab"
+    except (KeyError, TypeError, ValueError):
+        return [], "invalid"
+
+
+def _node_info(role: str, spec: dict) -> str:
+    if role == "router":
+        return f"OSPF {spec['ospf']['router_id']}, uplink {spec['uplink']['ip']}"
+    if role == "switch":
+        vlans = ",".join(str(v) for v in spec["trunk"]["vlans"])
+        return f"trunk {spec['trunk']['port']}, VLAN {vlans}"
+    return f"VLAN {spec['vlan']}, {spec['ip']}"
+
+
+def _latest_probes(conn) -> dict:
+    sid = conn.execute("SELECT MAX(snapshot_id) FROM probes").fetchone()[0]
+    if sid is None:
+        return {}
+    rows = conn.execute("SELECT src, dst, received, loss_pct, rtt_avg FROM probes "
+                        "WHERE snapshot_id = ?", (sid,)).fetchall()
+    return {(s, d): SimpleNamespace(received=rc, loss_pct=lp, rtt_avg=rtt)
+            for s, d, rc, lp, rtt in rows}
+
+
+def topology(conn, now: str | None = None, intent_path: str | None = None,
+             lab_path: str = LAB_PATH) -> dict:
+    """Dữ liệu để vẽ sơ đồ: thiết bị (từ intent), liên kết (từ file lab), trạng thái từ các sự cố
+    đang mở, và kết quả đo của các luồng ở lần quét gần nhất. Chỉ đọc."""
+    now = now or runs.now()
+    data = intent_mod.load_intent(intent_path or intent_mod.INTENT_PATH)
+    per_node: dict = {}
+    for inc in incidents.open_incidents(conn):
+        per_node.setdefault(inc["node"], []).append(inc)
+
+    def rank(items):
+        return max((SEVERITY_RANK.get(i["severity"], 0) for i in items), default=0)
+
+    nodes = []
+    for key, role in ROLES:
+        for name in sorted(data[key]):
+            items = per_node.get(name, [])
+            nodes.append({
+                "name": name, "role": role, "status": STATUS_OF_RANK[rank(items)],
+                "info": _node_info(role, data[key][name]),
+                "incidents": [{"id": i["id"], "severity": i["severity"], "message": i["message"]}
+                              for i in items]})
+    known = {n["name"] for n in nodes}
+
+    pairs, source = lab_links(lab_path)
+    links = []
+    for (a, pa), (b, pb) in pairs:
+        if a not in known or b not in known:
+            continue
+        hit = [i for i in per_node.get(a, []) if port_mentioned(i["message"], pa)]
+        hit += [i for i in per_node.get(b, []) if port_mentioned(i["message"], pb)]
+        links.append({"a": a, "a_port": pa, "b": b, "b_port": pb,
+                      "status": STATUS_OF_RANK[rank(hit)]})
+
+    latest = _latest_probes(conn)
+    flows = []
+    for item in data.get("probes", []):
+        p = latest.get((item["src"], item["dst"]))
+        flows.append({"src": item["src"], "dst": item["dst"],
+                      "state": health.flow_state(p) if p else "unknown",
+                      "loss_pct": p.loss_pct if p else None,
+                      "rtt_avg": p.rtt_avg if p else None})
+    return {"generated_at": now, "nodes": nodes, "links": links, "links_source": source,
+            "flows": flows}

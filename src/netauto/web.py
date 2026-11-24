@@ -96,6 +96,10 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
     def nodes():
         return {"nodes": webdata.node_names()}
 
+    @app.get("/api/topology")
+    def topology():
+        return query(webdata.topology)
+
     @app.get("/api/incidents")
     def incident_list(limit: int | None = None, only_open: bool = False):
         return query(webdata.incident_list, limit, only_open)
