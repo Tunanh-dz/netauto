@@ -1,0 +1,20 @@
+[Unit]
+Description=Netauto web (giao dien web, chi lang nghe 127.0.0.1)
+After=netauto-monitor.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/netauto
+Environment=PYTHONPATH=%h/netauto/src
+Environment=PYTHONUNBUFFERED=1
+# Khong them --host: mac dinh la 127.0.0.1. Giao dien co nut ap dung cau hinh va khong co dang nhap.
+ExecStart=/usr/bin/python3 -m netauto.web --port 8000
+KillSignal=SIGINT
+# Dung mem: mot lan ap dung tu web dang chay (toi da 300 giay) duoc lam xong truoc khi tat
+TimeoutStopSec=330
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2
+
+[Install]
+WantedBy=default.target
