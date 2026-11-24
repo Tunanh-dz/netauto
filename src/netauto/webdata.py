@@ -7,6 +7,7 @@ Mọi giá trị trả về đều chuyển được sang JSON.
 import json
 import re
 import sqlite3
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import yaml
@@ -222,3 +223,94 @@ def topology(conn, now: str | None = None, intent_path: str | None = None,
                       "rtt_avg": p.rtt_avg if p else None})
     return {"generated_at": now, "nodes": nodes, "links": links, "links_source": source,
             "flows": flows}
+
+
+# ---------------------------------------------------------------- 30A: lịch sử cho biểu đồ
+RANGE_SECONDS = {"15m": 900, "1h": 3600, "6h": 6 * 3600, "24h": 24 * 3600}
+DEFAULT_RANGE = "1h"
+BUCKETS = 24            # số cột của biểu đồ đếm sự cố
+MAX_POINTS = 240        # tối đa số điểm trên một đường (đủ mịn cho màn hình, nhẹ cho trình duyệt)
+MAX_INCIDENTS = 300
+AVAILABLE_SCORE = 90    # điểm sức khỏe từ mức này trở lên tính là mạng 'khỏe'
+FIX_ATTEMPTS = ("fixed", "ineffective", "failed", "rolled_back")   # refused/reset không phải lần thử sửa
+
+
+def range_seconds(key) -> int:
+    """Khoảng thời gian theo tên; tên lạ thì dùng mặc định (giống clamp_limit: không báo lỗi)."""
+    return RANGE_SECONDS.get(key, RANGE_SECONDS[DEFAULT_RANGE])
+
+
+def _seconds_since(start, iso: str) -> float:
+    return (datetime.fromisoformat(iso) - start).total_seconds()
+
+
+def downsample(rows: list, t_of, start, span_s: float, pick) -> list:
+    """Giảm số điểm xuống tối đa MAX_POINTS mà KHÔNG làm mất đỉnh/đáy: chia khoảng thành các ô
+    thời gian bằng nhau, mỗi ô giữ lại một điểm do pick chọn (ví dụ điểm có điểm sức khỏe thấp nhất).
+    Điểm không bị gộp thì giữ nguyên, thứ tự thời gian được giữ."""
+    if len(rows) <= MAX_POINTS:
+        return rows
+    best: dict = {}
+    for row in rows:
+        idx = min(MAX_POINTS - 1, int(_seconds_since(start, t_of(row)) / span_s * MAX_POINTS))
+        if idx not in best or pick(row) > pick(best[idx]):
+            best[idx] = row
+    return [best[i] for i in sorted(best)]
+
+
+def history(conn, range_key=None, now: str | None = None) -> dict:
+    """Mọi thứ cần để vẽ các biểu đồ lịch sử trong một khoảng thời gian. Chỉ đọc.
+    Thời gian lưu dạng ISO cùng múi giờ nên so sánh chuỗi cho đúng thứ tự."""
+    now = now or runs.now()
+    key = range_key if range_key in RANGE_SECONDS else DEFAULT_RANGE
+    span = range_seconds(key)
+    end = datetime.fromisoformat(now)
+    start = end - timedelta(seconds=span)
+    t0 = start.isoformat(timespec="seconds")
+
+    health_rows = conn.execute("SELECT at, score FROM health WHERE at >= ? AND at <= ? ORDER BY at",
+                               (t0, now)).fetchall()
+    health_pts = [{"at": a, "score": s} for a, s in
+                  downsample(health_rows, lambda r: r[0], start, span, lambda r: -r[1])]
+
+    inc_cols = ("id", "node", "severity", "kind", "message", "opened_at", "closed_at", "root_id")
+    inc_rows = conn.execute(
+        f"SELECT {', '.join(inc_cols)} FROM incidents WHERE opened_at <= ? "
+        "AND (closed_at IS NULL OR closed_at >= ?) ORDER BY id DESC LIMIT ?",
+        (now, t0, MAX_INCIDENTS)).fetchall()
+    inc = [dict(zip(inc_cols, r)) for r in reversed(inc_rows)]
+
+    step = span / BUCKETS
+    buckets = [{"start": (start + timedelta(seconds=i * step)).isoformat(timespec="seconds"),
+                "critical": 0, "warning": 0} for i in range(BUCKETS)]
+    for sev, opened in conn.execute("SELECT severity, opened_at FROM incidents "
+                                    "WHERE opened_at >= ? AND opened_at <= ?", (t0, now)):
+        if sev in ("critical", "warning"):
+            idx = min(BUCKETS - 1, int(_seconds_since(start, opened) / step))
+            buckets[idx][sev] += 1
+
+    per_flow: dict = {}
+    for at, src, dst, rtt, loss in conn.execute(
+            "SELECT at, src, dst, rtt_avg, loss_pct FROM probes WHERE at >= ? AND at <= ? ORDER BY at",
+            (t0, now)):
+        per_flow.setdefault((src, dst), []).append((at, rtt, loss))
+    flows = []
+    for (src, dst) in sorted(per_flow):
+        rows = downsample(per_flow[(src, dst)], lambda r: r[0], start, span,
+                          lambda r: (r[2] or 0.0, r[1] or 0.0))     # ưu tiên ô có mất gói, rồi RTT cao
+        flows.append({"src": src, "dst": dst,
+                      "points": [{"at": a, "rtt": r, "loss": l} for a, r, l in rows]})
+
+    outcomes = {o: n for o, n in conn.execute(
+        "SELECT outcome, COUNT(*) FROM remediations WHERE started_at >= ? AND started_at <= ? "
+        "AND outcome IS NOT NULL GROUP BY outcome", (t0, now))}
+    total, healthy = conn.execute("SELECT COUNT(*), COALESCE(SUM(score >= ?), 0) FROM health "
+                                  "WHERE at >= ? AND at <= ?", (AVAILABLE_SCORE, t0, now)).fetchone()
+    attempts = sum(n for o, n in outcomes.items() if o in FIX_ATTEMPTS)
+    summary = {
+        # tính trên các lần quét (không tính lúc monitor tắt), từ MỌI mẫu chứ không chỉ các điểm đã thưa đi
+        "availability_pct": round(100.0 * healthy / total, 1) if total else None, "samples": total,
+        "fix_success_pct": round(100.0 * outcomes.get("fixed", 0) / attempts, 1) if attempts else None,
+        "fix_attempts": attempts}
+    return {"range": key, "from": t0, "to": now, "health": health_pts, "incidents": inc,
+            "buckets": buckets, "flows": flows, "fix_outcomes": outcomes, "summary": summary}

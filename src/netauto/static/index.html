@@ -6,24 +6,29 @@
 <title>NetAuto - Tổng quan</title>
 <style>
   :root {
-    --bg: #f4f6f8; --card: #ffffff; --ink: #1c2530; --muted: #5d6b7a; --line: #dde3e9;
+    --bg: #e9edf1; --card: #ffffff; --ink: #1f2933; --muted: #5f6c7b; --line: #d5dce3;
     --ok: #17803d; --ok-bg: #e3f4ea; --warn: #9a6700; --warn-bg: #fff3cd;
-    --bad: #b42318; --bad-bg: #fde7e4; --idle: #5d6b7a; --idle-bg: #e8ecf0; --accent: #1d5fd1;
+    --bad: #b42318; --bad-bg: #fde7e4; --idle: #5f6c7b; --idle-bg: #e8ecf0; --accent: #1a6fb5;
+    --head: #1f3347; --head-ink: #ffffff; --head-muted: #b8c7d6;
+    --series: #2a78d6; --st-critical: #d03b3b; --st-warning: #fab219; --surface: #ffffff;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #11161c; --card: #1a2129; --ink: #e6ebf0; --muted: #98a6b5; --line: #2b3541;
-      --ok: #4cc27a; --ok-bg: #173325; --warn: #e3b341; --warn-bg: #3a2f10;
-      --bad: #ff7b72; --bad-bg: #3d1a17; --idle: #98a6b5; --idle-bg: #232c36; --accent: #6ea1ff;
-    }
+  :root[data-theme="dark"] {
+    --bg: #11161c; --card: #1a2129; --ink: #e6ebf0; --muted: #98a6b5; --line: #2b3541;
+    --ok: #4cc27a; --ok-bg: #173325; --warn: #e3b341; --warn-bg: #3a2f10;
+    --bad: #ff7b72; --bad-bg: #3d1a17; --idle: #98a6b5; --idle-bg: #232c36; --accent: #6ea1ff;
+    --head: #0b1016; --head-ink: #e6ebf0; --head-muted: #98a6b5;
+    --series: #3987e5; --surface: #1a2129;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }   /* thuộc tính hidden phải thắng mọi display khác */
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
-           padding: 14px 20px; background: var(--card); border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 18px; margin: 0 8px 0 0; }
+           padding: 12px 20px; background: var(--head); color: var(--head-ink); }
+  header h1 { font-size: 18px; margin: 0 8px 0 0; color: var(--head-ink); letter-spacing: .02em; }
+  header .muted { color: var(--head-muted); }
+  .themebtn { font: inherit; font-size: 13px; font-weight: 600; padding: 3px 12px; border-radius: 999px; cursor: pointer;
+              background: transparent; color: var(--head-ink); border: 1px solid var(--head-muted); }
   main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
   .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 13px;
           font-weight: 600; background: var(--idle-bg); color: var(--idle); }
@@ -51,8 +56,9 @@
   tr:last-child td { border-bottom: 0; }
   .empty { padding: 16px; color: var(--muted); }
   nav { display: flex; gap: 4px; flex-wrap: wrap; }
-  nav a { padding: 4px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: 14px; }
-  nav a.active { background: var(--idle-bg); color: var(--ink); }
+  nav a { padding: 4px 12px; border-radius: 8px; color: var(--head-muted); text-decoration: none; font-weight: 600; font-size: 14px; }
+  nav a:hover { color: var(--head-ink); }
+  nav a.active { background: rgba(255,255,255,.16); color: var(--head-ink); }
   .panel[hidden] { display: none; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; }
   tr.click { cursor: pointer; }
@@ -87,15 +93,86 @@
   .mapnode text.sub { font: 11px system-ui, sans-serif; fill: var(--muted); }
   .maplabel { fill: var(--muted); font: 10px ui-monospace, Consolas, monospace; text-anchor: middle; }
   .layerlabel { fill: var(--muted); font: 600 11px system-ui, sans-serif; text-transform: uppercase; }
+  /* 30A: biểu đồ. Màu trạng thái là bảng cố định (không đổi theo theme); chuỗi đơn dùng xanh dương. */
+  :root[data-theme="dark"] svg.chart .band { opacity: .25; }
+  .rangebar { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .rangebar button { font: inherit; font-weight: 600; padding: 5px 14px; border: 0; cursor: pointer;
+                     background: var(--card); color: var(--muted); border-right: 1px solid var(--line); }
+  .rangebar button:last-child { border-right: 0; }
+  .rangebar button.active { background: var(--idle-bg); color: var(--ink); }
+  .chartcard { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-top: 16px; }
+  .chartcard h2 { font-size: 15px; margin: 0 0 2px; }
+  .chartcard .sub { margin: 0 0 8px; }
+  .chartcard.loading svg { opacity: .5; }          /* tải lại: giữ khung cũ, không nhấp nháy */
+  svg.chart { width: 100%; height: auto; display: block; }
+  svg.chart text { fill: var(--muted); font: 11px system-ui, sans-serif; }
+  svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+  svg.chart .axis { stroke: var(--muted); stroke-width: 1; }
+  svg.chart .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; }
+  svg.chart .hair { stroke: var(--muted); stroke-width: 1; }
+  svg.chart .ring { stroke: var(--surface); stroke-width: 2; }
+  svg.chart .band { fill: var(--st-critical); opacity: .12; }
+  svg.chart .bar-critical { fill: var(--st-critical); }
+  svg.chart .bar-warning { fill: var(--st-warning); }
+  svg.chart .bar-ok { fill: var(--series); }
+  svg.chart .lossdot { fill: var(--st-critical); }
+  svg.chart .open-tick { stroke: var(--ink); stroke-width: 2; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px 0 0; font-size: 13px; color: var(--ink); }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .legend i.critical { background: var(--st-critical); } .legend i.warning { background: var(--st-warning); }
+  .legend i.series { background: var(--series); }
+  .smgrid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .smgrid h3 { margin: 0 0 2px; font-size: 13px; }
+  #tip { position: fixed; z-index: 10; pointer-events: none; padding: 6px 10px; border-radius: 8px; font-size: 12px;
+         background: var(--card); color: var(--ink); border: 1px solid var(--line); box-shadow: 0 2px 8px rgba(0,0,0,.18); max-width: 320px; }
+  #tip b { font-size: 14px; display: block; }
+  details.tableview { margin-top: 16px; } details.tableview summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+  /* 30B: widget kiểu bảng điều khiển */
+  .widget { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .whead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .whead h2 { font-size: 15px; margin: 0; }
+  .whead .sub { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .wbody { padding: 12px 16px; }
+  .cols { display: grid; gap: 16px; margin-top: 16px; grid-template-columns: minmax(250px, 1fr) 2fr; align-items: start; }
+  .stack { display: grid; gap: 16px; }
+  #kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  @media (max-width: 1000px) { #kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; background: var(--idle); }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--st-warning); } .dot.bad { background: var(--st-critical); }
+  .tree details { margin: 2px 0; }
+  .tree summary { cursor: pointer; padding: 4px 0; font-weight: 600; color: var(--accent); }
+  .tree .leaf { padding: 3px 0 3px 22px; cursor: default; display: flex; align-items: center; }
+  .tree .leaf:hover { background: var(--idle-bg); }
+  .tree .leaf small { margin-left: auto; color: var(--muted); }
+  #nodecard { position: fixed; z-index: 11; pointer-events: none; min-width: 230px; max-width: 320px; background: var(--card); color: var(--ink);
+              border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.2); font-size: 13px; }
+  #nodecard h3 { margin: 0; padding: 8px 12px; font-size: 14px; border-bottom: 1px solid var(--line); }
+  #nodecard dl { margin: 0; display: grid; grid-template-columns: auto 1fr; }
+  #nodecard dt, #nodecard dd { margin: 0; padding: 5px 12px; }
+  #nodecard dt { color: var(--muted); background: var(--idle-bg); } #nodecard dd { text-align: right; }
+  .bar { display: inline-block; width: 110px; height: 10px; border-radius: 5px; background: var(--idle-bg); overflow: hidden; vertical-align: middle; margin-right: 8px; }
+  .bar i { display: block; height: 100%; background: var(--ok); } .bar i.warn { background: var(--st-warning); } .bar i.bad { background: var(--st-critical); }
+  svg.ring { width: 100%; max-width: 150px; height: auto; display: block; margin: 0 auto; }
+  svg.ring .track { stroke: var(--line); }
+  svg.ring .val.ok { stroke: var(--ok); } svg.ring .val.warn { stroke: var(--st-warning); } svg.ring .val.bad { stroke: var(--st-critical); }
+  svg.ring text.ringnum { fill: var(--ink); font: 700 24px system-ui, sans-serif; }
+  .ringcard { text-align: center; }
+  .donutrow { display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center; }
+  .donutrow svg { width: 150px; height: 150px; flex: none; }
+  .donutrow ul { list-style: none; margin: 0; padding: 0; }
+  .donutrow li { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
+  .donutrow li b { min-width: 28px; font-size: 18px; }
   .notice { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-weight: 600; }
 </style>
 </head>
 <body>
 <header>
-  <h1>NetAuto</h1>
+  <h1>NetAuto Summary</h1>
   <nav id="nav">
     <a href="#overview" data-tab="overview">Tổng quan</a>
     <a href="#map" data-tab="map">Sơ đồ</a>
+    <a href="#charts" data-tab="charts">Biểu đồ</a>
     <a href="#incidents" data-tab="incidents">Sự cố</a>
     <a href="#fixes" data-tab="fixes">Tự sửa</a>
     <a href="#measure" data-tab="measure">Đo lường</a>
@@ -107,12 +184,13 @@
   <span id="breaker" class="pill bad" hidden>Cầu chì tự sửa đã ngắt</span>
   <span class="spacer"></span>
   <span id="updated" class="muted">Chưa có dữ liệu</span>
+  <button class="themebtn" id="btn-theme" type="button" aria-label="Đổi chế độ sáng hoặc tối">Chế độ tối</button>
 </header>
 <main id="app">
   <div id="banner">Mất kết nối tới API. Đang thử lại...</div>
 
   <div id="tab-overview" class="panel">
-  <div class="grid">
+  <div class="grid" id="kpis">
     <div class="card">
       <h2>Điểm sức khỏe</h2>
       <div id="score" class="big">-</div>
@@ -128,6 +206,36 @@
       <h2>Tự sửa gần nhất</h2>
       <div id="lastfix" class="big" style="font-size:24px">-</div>
       <div id="lastfix2" class="muted">-</div>
+    </div>
+    <div class="card ringcard">
+      <h2>Độ sẵn sàng</h2>
+      <svg id="ring-uptime" class="ring" viewBox="0 0 120 120" role="img" aria-label="Độ sẵn sàng"></svg>
+      <div id="ring-uptime-sub" class="muted">-</div>
+    </div>
+    <div class="card ringcard">
+      <h2>Tự sửa thành công</h2>
+      <svg id="ring-fix" class="ring" viewBox="0 0 120 120" role="img" aria-label="Tự sửa thành công"></svg>
+      <div id="ring-fix-sub" class="muted">-</div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="widget" id="widget-nodes">
+      <div class="whead"><h2>Thiết bị mạng</h2><span class="sub">Nhóm theo loại</span></div>
+      <div class="wbody tree" id="nodes-tree"></div>
+    </div>
+    <div class="stack">
+      <div class="widget" id="widget-flows">
+        <div class="whead"><h2>Luồng có độ trễ cao nhất</h2><span class="sub">Lần đo gần nhất</span></div>
+        <div class="tablewrap" id="flows-bars" style="border:0;border-radius:0"></div>
+      </div>
+      <div class="widget" id="widget-health">
+        <div class="whead"><h2>Sức khỏe thiết bị</h2><span class="sub">Theo sự cố đang mở</span></div>
+        <div class="wbody donutrow">
+          <svg id="donut-health" viewBox="0 0 140 140" role="img" aria-label="Sức khỏe thiết bị"></svg>
+          <ul id="donut-legend"></ul>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -155,6 +263,48 @@
       <h2>Các luồng được đo</h2>
       <div class="tablewrap" id="map-flows"></div>
     </section>
+  </div>
+
+  <div id="tab-charts" class="panel" hidden>
+    <div class="toolbar">
+      <span class="rangebar" id="rangebar">
+        <button data-range="15m">15 phút</button><button data-range="1h" class="active">1 giờ</button>
+        <button data-range="6h">6 giờ</button><button data-range="24h">24 giờ</button>
+      </span>
+      <span class="muted" id="chart-meta">-</span>
+    </div>
+
+    <div class="chartcard" id="card-health">
+      <h2>Điểm sức khỏe theo thời gian</h2>
+      <p class="muted sub">Dải đỏ nhạt: lúc có sự cố mức nghiêm trọng đang mở. Rê chuột để đọc giá trị.</p>
+      <svg id="chart-health" class="chart" viewBox="0 0 900 240" role="img" aria-label="Điểm sức khỏe theo thời gian"></svg>
+    </div>
+
+    <div class="chartcard" id="card-timeline">
+      <h2>Dòng thời gian sự cố theo thiết bị</h2>
+      <p class="muted sub">Mỗi thanh là một sự cố, từ lúc mở đến lúc đóng. Vạch đen ở mép phải: sự cố còn mở.</p>
+      <svg id="chart-timeline" class="chart" viewBox="0 0 900 200" role="img" aria-label="Dòng thời gian sự cố"></svg>
+      <div class="legend"><span><i class="critical"></i>Nghiêm trọng</span><span><i class="warning"></i>Cảnh báo</span></div>
+    </div>
+
+    <div class="chartcard" id="card-buckets">
+      <h2>Số sự cố mới theo thời gian</h2>
+      <p class="muted sub">Mỗi cột là một khoảng bằng nhau; chiều cao là số sự cố mở trong khoảng đó.</p>
+      <svg id="chart-buckets" class="chart" viewBox="0 0 900 200" role="img" aria-label="Số sự cố mới theo thời gian"></svg>
+      <div class="legend"><span><i class="critical"></i>Nghiêm trọng</span><span><i class="warning"></i>Cảnh báo</span></div>
+    </div>
+
+    <div class="chartcard" id="card-flows">
+      <h2>Độ trễ từng luồng</h2>
+      <p class="muted sub">Đường xanh: RTT trung bình (ms). Chấm đỏ: lần đo có mất gói.</p>
+      <div class="smgrid" id="chart-flows"></div>
+      <div class="legend"><span><i class="series"></i>RTT trung bình</span><span><i class="critical"></i>Mất gói</span></div>
+    </div>
+
+    <details class="tableview"><summary>Xem dạng bảng</summary>
+      <div class="muted" id="fix-summary" style="margin:8px 0"></div>
+      <div class="tablewrap" id="chart-table"></div>
+    </details>
   </div>
 
   <div id="tab-incidents" class="panel" hidden>
@@ -355,14 +505,145 @@ function renderFixes(items) {
   }
 }
 
+// ---- 30B: widget trên tổng quan. Chữ từ mạng chỉ vào DOM bằng textContent.
+var RING_C = 2 * Math.PI * 48;
+function ringTone(pct) { return pct >= 95 ? "ok" : (pct >= 80 ? "warn" : "bad"); }
+
+function ring(svg, pct, centerText, label) {
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  svg.appendChild(svgEl("circle", {cx: 60, cy: 60, r: 48, fill: "none", "stroke-width": 12, "class": "track"}));
+  if (pct !== null && pct > 0) {
+    var len = RING_C * Math.min(100, pct) / 100;
+    svg.appendChild(svgEl("circle", {cx: 60, cy: 60, r: 48, fill: "none", "stroke-width": 12, "stroke-linecap": "round",
+      "stroke-dasharray": len.toFixed(1) + " " + RING_C.toFixed(1), transform: "rotate(-90 60 60)", "class": "val " + ringTone(pct)}));
+  }
+  svg.appendChild(svgEl("text", {x: 60, y: 68, "text-anchor": "middle", "class": "ringnum"}, centerText));
+  svg.setAttribute("aria-label", label);
+}
+
+var STATUS_NAME = {ok: "Bình thường", warn: "Cảnh báo", bad: "Lỗi"};
+var ROLE_NAME = {router: "Router", switch: "Switch", host: "Máy trạm"};
+var cardEl = null;
+
+function showNodeCard(evt, n, flows) {
+  if (!cardEl) { cardEl = el("div", ""); cardEl.id = "nodecard"; cardEl.hidden = true; document.body.appendChild(cardEl); }
+  while (cardEl.firstChild) cardEl.removeChild(cardEl.firstChild);
+  var h = el("h3", ""); h.appendChild(el("span", "dot " + n.status)); h.appendChild(document.createTextNode(n.name));
+  cardEl.appendChild(h);
+  var dl = el("dl", "");
+  var rows = [["Loại", ROLE_NAME[n.role] || n.role], ["Cấu hình", n.info], ["Trạng thái", STATUS_NAME[n.status] || n.status]];
+  var related = flows.filter(function (f) { return f.src === n.name && f.rtt_avg !== null; });
+  if (related.length) rows.push(["RTT đi", related.map(function (f) { return num(f.rtt_avg, 1) + " ms"; }).join(", ")]);
+  if (n.incidents.length) rows.push(["Sự cố", n.incidents.map(function (i) { return "#" + i.id; }).join(", ")]);
+  rows.forEach(function (r) { dl.appendChild(el("dt", "", r[0])); dl.appendChild(el("dd", "", r[1])); });
+  cardEl.appendChild(dl);
+  cardEl.hidden = false;
+  var x = evt.clientX + 16, y = evt.clientY + 8;
+  if (x + cardEl.offsetWidth > window.innerWidth - 8) x = evt.clientX - cardEl.offsetWidth - 16;
+  if (y + cardEl.offsetHeight > window.innerHeight - 8) y = window.innerHeight - cardEl.offsetHeight - 8;
+  cardEl.style.left = Math.max(4, x) + "px"; cardEl.style.top = Math.max(4, y) + "px";
+}
+
+function renderTree(topo) {
+  var box = $("nodes-tree");
+  var open = {};     // giữ nhóm nào đang mở khi trang tự làm mới 5 giây
+  Array.prototype.forEach.call(box.querySelectorAll("details"), function (d) { open[d.getAttribute("data-role")] = d.open; });
+  while (box.firstChild) box.removeChild(box.firstChild);
+  if (!topo) { box.appendChild(el("div", "empty", "Chưa có dữ liệu")); return; }
+  ["router", "switch", "host"].forEach(function (role) {
+    var items = topo.nodes.filter(function (n) { return n.role === role; });
+    var det = el("details", ""); det.setAttribute("data-role", role);
+    det.open = open[role] === undefined ? true : open[role];
+    var bad = items.filter(function (n) { return n.status !== "ok"; }).length;
+    det.appendChild(el("summary", "", ROLE_NAME[role] + " (" + items.length + ")" + (bad ? " · " + bad + " có vấn đề" : "")));
+    items.forEach(function (n) {
+      var leaf = el("div", "leaf");
+      leaf.setAttribute("tabindex", "0");
+      leaf.appendChild(el("span", "dot " + n.status));
+      leaf.appendChild(el("span", "", n.name));
+      leaf.appendChild(el("small", "", STATUS_NAME[n.status] || n.status));
+      leaf.addEventListener("pointermove", function (e) { showNodeCard(e, n, topo.flows); });
+      leaf.addEventListener("pointerleave", function () { if (cardEl) cardEl.hidden = true; });
+      leaf.addEventListener("focus", function () { var r = leaf.getBoundingClientRect(); showNodeCard({clientX: r.right, clientY: r.top}, n, topo.flows); });
+      leaf.addEventListener("blur", function () { if (cardEl) cardEl.hidden = true; });
+      det.appendChild(leaf);
+    });
+    box.appendChild(det);
+  });
+}
+
+function barCell(pct, tone, text) {
+  var wrap = el("span", ""), bar = el("span", "bar"), fill = el("i", tone);
+  fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+  bar.appendChild(fill); wrap.appendChild(bar); wrap.appendChild(document.createTextNode(text));
+  return wrap;
+}
+
+function renderFlowBars(topo) {
+  if (!topo) { table($("flows-bars"), ["Luồng"], [], "Chưa có dữ liệu"); return; }
+  var flows = topo.flows.slice().sort(function (a, b) {
+    return (b.loss_pct || 0) - (a.loss_pct || 0) || (b.rtt_avg || 0) - (a.rtt_avg || 0);
+  });
+  table($("flows-bars"), ["Luồng", "RTT trung bình", "Mất gói"], flows.map(function (f) {
+    if (f.state === "unknown") return [{text: f.src + " → " + f.dst}, {text: "-"}, {text: "-"}];
+    var rttTone = f.rtt_avg === null ? "bad" : (f.rtt_avg >= 10 ? "warn" : "ok");
+    var lossTone = f.loss_pct >= 50 ? "bad" : (f.loss_pct > 0 ? "warn" : "ok");
+    return [{text: f.src + " → " + f.dst},
+            {node: barCell(f.rtt_avg === null ? 100 : f.rtt_avg / 20 * 100, rttTone, f.rtt_avg === null ? "không có" : num(f.rtt_avg, 1) + " ms")},
+            {node: barCell(f.loss_pct, lossTone, num(f.loss_pct, 0) + "%")}];
+  }), "Intent chưa khai báo luồng nào.");
+}
+
+function renderHealthDonut(topo) {
+  var svg = $("donut-health"), legend = $("donut-legend");
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  while (legend.firstChild) legend.removeChild(legend.firstChild);
+  var R = 54, C = 2 * Math.PI * R, GAP = 3;
+  svg.appendChild(svgEl("circle", {cx: 70, cy: 70, r: R, fill: "none", "stroke-width": 22, "class": "track", stroke: "var(--line)"}));
+  if (!topo) { legend.appendChild(el("li", "", "Chưa có dữ liệu")); return; }
+  var counts = {ok: 0, warn: 0, bad: 0};
+  topo.nodes.forEach(function (n) { counts[n.status] += 1; });
+  var total = topo.nodes.length, acc = 0, fills = {ok: "var(--ok)", warn: "var(--st-warning)", bad: "var(--st-critical)"};
+  ["ok", "warn", "bad"].forEach(function (k) {
+    var li = el("li", "");
+    li.appendChild(el("span", "dot " + k)); li.appendChild(el("b", "", String(counts[k])));
+    li.appendChild(el("span", "", STATUS_NAME[k] + (total ? " (" + Math.round(100 * counts[k] / total) + "%)" : "")));
+    legend.appendChild(li);
+    if (!counts[k]) return;
+    var len = C * counts[k] / total, seg = svgEl("circle", {cx: 70, cy: 70, r: R, fill: "none", "stroke-width": 22, stroke: fills[k],
+      "stroke-dasharray": Math.max(1, len - (counts[k] < total ? GAP : 0)).toFixed(1) + " " + C.toFixed(1),
+      "stroke-dashoffset": (-acc).toFixed(1), transform: "rotate(-90 70 70)"});
+    seg.appendChild(svgEl("title", {}, STATUS_NAME[k] + ": " + counts[k] + " / " + total));
+    svg.appendChild(seg); acc += len;
+  });
+  svg.appendChild(svgEl("text", {x: 70, y: 66, "text-anchor": "middle", style: "font:700 26px system-ui;fill:var(--ink)"}, String(total)));
+  svg.appendChild(svgEl("text", {x: 70, y: 84, "text-anchor": "middle", style: "font:11px system-ui;fill:var(--muted)"}, "thiết bị"));
+  svg.setAttribute("aria-label", "Sức khỏe thiết bị: " + counts.ok + " bình thường, " + counts.warn + " cảnh báo, " + counts.bad + " lỗi");
+}
+
+function renderWidgets(topo, hist) {
+  renderTree(topo); renderFlowBars(topo); renderHealthDonut(topo);
+  var sum = hist && hist.summary;
+  var av = sum ? sum.availability_pct : null, fx = sum ? sum.fix_success_pct : null;
+  ring($("ring-uptime"), av, av === null ? "-" : av.toFixed(1) + "%",
+       av === null ? "Độ sẵn sàng: chưa có dữ liệu" : "Độ sẵn sàng 1 giờ qua: " + av.toFixed(1) + " phần trăm");
+  $("ring-uptime-sub").textContent = av === null ? "Chưa có dữ liệu" : "1 giờ qua · điểm khỏe từ 90 · " + sum.samples + " lần quét";
+  ring($("ring-fix"), fx, fx === null ? "-" : fx.toFixed(0) + "%",
+       fx === null ? "Tự sửa: chưa có lần nào" : "Tự sửa thành công: " + fx.toFixed(0) + " phần trăm");
+  $("ring-fix-sub").textContent = fx === null ? "Chưa có lần tự sửa trong 1 giờ" : sum.fix_attempts + " lần tự sửa trong 1 giờ qua";
+}
+
 function refreshOverview() {
   return Promise.all([
     getJSON("/api/status"),
     getJSON("/api/incidents?only_open=true&limit=50"),
     getJSON("/api/health?limit=60"),
-    getJSON("/api/remediations?limit=10")
+    getJSON("/api/remediations?limit=10"),
+    getJSON("/api/topology").catch(function () { return null; }),
+    getJSON("/api/history?range=1h").catch(function () { return null; })
   ]).then(function (r) {
     var status = r[0], inc = r[1], hist = r[2], fix = r[3];
+    renderWidgets(r[4], r[5]);
     renderMonitor(status.monitor);
     renderHealth(status.health, hist.items);
     $("open").textContent = status.open_incidents;
@@ -679,9 +960,222 @@ function refreshMap() {
   });
 }
 
+// ---- 30A: biểu đồ lịch sử. Mọi chữ lấy từ mạng chỉ vào DOM bằng textContent.
+var chartRange = "1h";
+var tipEl = null;
+
+function tip() {
+  if (!tipEl) { tipEl = el("div", ""); tipEl.id = "tip"; tipEl.hidden = true; document.body.appendChild(tipEl); }
+  return tipEl;
+}
+function showTip(evt, head, lines) {
+  var t = tip();
+  while (t.firstChild) t.removeChild(t.firstChild);
+  t.appendChild(el("b", "", head));
+  lines.forEach(function (l) { t.appendChild(el("div", "", l)); });
+  t.hidden = false;
+  var x = evt.clientX + 14, y = evt.clientY + 14;
+  if (x + t.offsetWidth > window.innerWidth - 8) x = evt.clientX - t.offsetWidth - 14;
+  if (y + t.offsetHeight > window.innerHeight - 8) y = evt.clientY - t.offsetHeight - 14;
+  t.style.left = Math.max(4, x) + "px"; t.style.top = Math.max(4, y) + "px";
+}
+function hideTip() { if (tipEl) tipEl.hidden = true; }
+
+function hhmm(ms) { var d = new Date(ms); return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
+function hhmmss(ms) { return hhmm(ms) + ":" + ("0" + new Date(ms).getSeconds()).slice(-2); }
+function clear(svg) { while (svg.firstChild) svg.removeChild(svg.firstChild); }
+
+// Khung chung: lề, thang thời gian, trục thời gian (5 mốc), lưới ngang. Trả về các hàm đổi toạ độ.
+function frame(svg, from, to, yMin, yMax, yTicks, opts) {
+  var vb = svg.viewBox.baseVal, W = vb.width, H = vb.height;
+  var L = (opts && opts.left) || 40, R = 14, T = 10, B = 24;
+  var fx = function (ms) { return L + (ms - from) / Math.max(1, to - from) * (W - L - R); };
+  var fy = function (v) { return T + (1 - (v - yMin) / Math.max(1e-9, yMax - yMin)) * (H - T - B); };
+  yTicks.forEach(function (v) {
+    svg.appendChild(svgEl("line", {x1: L, x2: W - R, y1: fy(v), y2: fy(v), "class": "grid"}));
+    svg.appendChild(svgEl("text", {x: L - 6, y: fy(v) + 4, "text-anchor": "end"}, String(v)));
+  });
+  for (var i = 0; i <= 4; i++) {
+    var ms = from + (to - from) * i / 4;
+    svg.appendChild(svgEl("text", {x: fx(ms), y: H - 6, "text-anchor": i === 0 ? "start" : (i === 4 ? "end" : "middle")}, hhmm(ms)));
+  }
+  svg.appendChild(svgEl("line", {x1: L, x2: W - R, y1: H - B, y2: H - B, "class": "axis"}));
+  return {fx: fx, fy: fy, L: L, R: R, T: T, B: B, W: W, H: H};
+}
+
+// Đường một chuỗi + crosshair bám điểm gần nhất + chú giải khi rê chuột / bàn phím.
+function lineChart(svg, from, to, pts, o) {
+  clear(svg);
+  var f = frame(svg, from, to, o.yMin, o.yMax, o.yTicks, o);
+  (o.bands || []).forEach(function (b) {
+    var x0 = f.fx(Math.max(from, b[0])), x1 = f.fx(Math.min(to, b[1]));
+    svg.appendChild(svgEl("rect", {x: x0, y: f.T, width: Math.max(2, x1 - x0), height: f.H - f.T - f.B, "class": "band"}));
+  });
+  if (!pts.length) {
+    svg.appendChild(svgEl("text", {x: f.W / 2, y: f.H / 2, "text-anchor": "middle"}, "Chưa có dữ liệu trong khoảng này"));
+    return;
+  }
+  // v === null = không có số đo (ví dụ mất hết gói): đường đứt quãng, không vẽ thành 0 ms
+  var d = "", pen = false;
+  pts.forEach(function (p) {
+    if (p.v === null) { pen = false; return; }
+    d += (pen ? "L" : "M") + f.fx(p.t).toFixed(1) + " " + f.fy(p.v).toFixed(1) + " "; pen = true;
+  });
+  svg.appendChild(svgEl("path", {d: d, "class": "line"}));
+  (o.marks || []).forEach(function (p) {
+    svg.appendChild(svgEl("circle", {cx: f.fx(p.t), cy: f.fy(p.v || 0), r: 4, "class": "lossdot ring"}));
+  });
+  var hair = svgEl("line", {y1: f.T, y2: f.H - f.B, "class": "hair"}); hair.style.display = "none"; svg.appendChild(hair);
+  var dot = svgEl("circle", {r: 4, fill: "var(--series)", "class": "ring"}); dot.style.display = "none"; svg.appendChild(dot);
+  var hit = svgEl("rect", {x: f.L, y: f.T, width: f.W - f.L - f.R, height: f.H - f.T - f.B, fill: "transparent", tabindex: 0});
+  function at(evt) {
+    var box = svg.getBoundingClientRect();
+    var x = (evt.clientX - box.left) / box.width * f.W, best = pts[0], bd = 1e18;
+    pts.forEach(function (p) { var dx = Math.abs(f.fx(p.t) - x); if (dx < bd) { bd = dx; best = p; } });
+    hair.setAttribute("x1", f.fx(best.t)); hair.setAttribute("x2", f.fx(best.t)); hair.style.display = "";
+    dot.setAttribute("cx", f.fx(best.t)); dot.setAttribute("cy", f.fy(best.v || 0)); dot.style.display = "";
+    showTip(evt, best.v === null ? "không có RTT" : o.fmt(best.v), [hhmmss(best.t)].concat(best.extra || []));
+  }
+  hit.addEventListener("pointermove", at);
+  hit.addEventListener("pointerleave", function () { hair.style.display = "none"; dot.style.display = "none"; hideTip(); });
+  svg.appendChild(hit);
+}
+
+function msOf(iso) { return Date.parse(iso); }
+
+function drawHealth(d) {
+  var from = msOf(d.from), to = msOf(d.to);
+  var bands = d.incidents.filter(function (i) { return i.severity === "critical"; }).map(function (i) {
+    return [msOf(i.opened_at), i.closed_at ? msOf(i.closed_at) : to];
+  });
+  lineChart($("chart-health"), from, to,
+    d.health.map(function (h) { return {t: msOf(h.at), v: h.score}; }),
+    {yMin: 0, yMax: 100, yTicks: [0, 25, 50, 75, 100], bands: bands, fmt: function (v) { return v + " điểm"; }});
+}
+
+// Dòng thời gian: mỗi thiết bị một hàng, mỗi sự cố một thanh (mức độ = màu + chú thích + tooltip).
+function drawTimeline(d) {
+  var svg = $("chart-timeline"), from = msOf(d.from), to = msOf(d.to);
+  var nodes = []; d.incidents.forEach(function (i) { if (nodes.indexOf(i.node) < 0) nodes.push(i.node); });
+  nodes.sort();
+  var rowH = 26, left = 70;
+  var H = Math.max(80, 30 + nodes.length * rowH);
+  svg.setAttribute("viewBox", "0 0 900 " + H);
+  clear(svg);
+  if (!nodes.length) {
+    svg.appendChild(svgEl("text", {x: 450, y: H / 2, "text-anchor": "middle"}, "Không có sự cố nào trong khoảng này"));
+    return;
+  }
+  var f = frame(svg, from, to, 0, nodes.length, [], {left: left});
+  nodes.forEach(function (n, r) {
+    var y = 10 + r * rowH;
+    svg.appendChild(svgEl("line", {x1: f.L, x2: f.W - f.R, y1: y + rowH, y2: y + rowH, "class": "grid"}));
+    svg.appendChild(svgEl("text", {x: f.L - 8, y: y + rowH / 2 + 4, "text-anchor": "end"}, n));
+  });
+  d.incidents.forEach(function (i) {
+    var r = nodes.indexOf(i.node), y = 10 + r * rowH + 4;
+    var a = Math.max(from, msOf(i.opened_at)), b = i.closed_at ? Math.min(to, msOf(i.closed_at)) : to;
+    var x0 = f.fx(a), w = Math.max(6, f.fx(b) - x0);
+    var bar = svgEl("rect", {x: x0, y: y, width: w, height: rowH - 8, rx: 4, "class": "bar-" + (i.severity === "critical" ? "critical" : "warning"), tabindex: 0});
+    var show = function (evt) {
+      showTip(evt, "#" + i.id + " " + i.node + " (" + (i.severity === "critical" ? "nghiêm trọng" : "cảnh báo") + ")",
+        [i.message, "Mở " + hhmmss(msOf(i.opened_at)) + (i.closed_at ? ", đóng " + hhmmss(msOf(i.closed_at)) : ", còn mở"),
+         i.root_id ? "Triệu chứng của #" + i.root_id : "Sự cố gốc"]);
+    };
+    bar.addEventListener("pointermove", show); bar.addEventListener("pointerleave", hideTip);
+    bar.addEventListener("focus", function () { var r2 = bar.getBoundingClientRect(); show({clientX: r2.left, clientY: r2.bottom}); });
+    bar.addEventListener("blur", hideTip);
+    svg.appendChild(bar);
+    if (!i.closed_at) svg.appendChild(svgEl("line", {x1: x0 + w - 1, x2: x0 + w - 1, y1: y - 2, y2: y + rowH - 6, "class": "open-tick"}));
+  });
+}
+
+// Cột chồng: nghiêm trọng ở dưới, cảnh báo ở trên, khe 2px giữa hai đoạn, đầu cột bo 4px.
+function drawBuckets(d) {
+  var svg = $("chart-buckets"), from = msOf(d.from), to = msOf(d.to);
+  var max = 1; d.buckets.forEach(function (b) { max = Math.max(max, b.critical + b.warning); });
+  var top = max <= 4 ? max : Math.ceil(max / 4) * 4;
+  var ticks = []; for (var t = 0; t <= top; t += Math.max(1, Math.round(top / 4))) ticks.push(t);
+  clear(svg);
+  var f = frame(svg, from, to, 0, top, ticks);
+  var cw = (f.W - f.L - f.R) / d.buckets.length;
+  d.buckets.forEach(function (b, i) {
+    var x = f.L + i * cw + 2, w = Math.max(2, cw - 4), y = f.fy(0);
+    var hc = f.fy(0) - f.fy(b.critical), hw = f.fy(0) - f.fy(b.warning);
+    if (b.critical) { svg.appendChild(svgEl("rect", {x: x, y: y - hc, width: w, height: hc, rx: 3, "class": "bar-critical"})); }
+    if (b.warning) { svg.appendChild(svgEl("rect", {x: x, y: y - hc - hw - (b.critical ? 2 : 0), width: w, height: hw, rx: 3, "class": "bar-warning"})); }
+    var hit = svgEl("rect", {x: f.L + i * cw, y: f.T, width: cw, height: f.H - f.T - f.B, fill: "transparent", tabindex: 0});
+    var show = function (evt) {
+      showTip(evt, hhmm(msOf(b.start)) + " – " + hhmm(msOf(b.start) + (to - from) / d.buckets.length),
+        ["Nghiêm trọng: " + b.critical, "Cảnh báo: " + b.warning]);
+    };
+    hit.addEventListener("pointermove", show); hit.addEventListener("pointerleave", hideTip);
+    hit.addEventListener("focus", function () { var r = hit.getBoundingClientRect(); show({clientX: r.left, clientY: r.top}); });
+    hit.addEventListener("blur", hideTip);
+    svg.appendChild(hit);
+  });
+}
+
+// Nhiều biểu đồ nhỏ: mỗi luồng một biểu đồ một chuỗi, cùng thang thời gian; mất gói đánh dấu bằng chấm.
+function drawFlows(d) {
+  var box = $("chart-flows"), from = msOf(d.from), to = msOf(d.to);
+  while (box.firstChild) box.removeChild(box.firstChild);
+  if (!d.flows.length) { box.appendChild(el("div", "empty", "Chưa có kết quả đo luồng trong khoảng này")); return; }
+  d.flows.forEach(function (fl) {
+    var cell = el("div", "");
+    cell.appendChild(el("h3", "", fl.src + " → " + fl.dst));
+    var svg = svgEl("svg", {viewBox: "0 0 320 130", "class": "chart", role: "img", "aria-label": "RTT " + fl.src + " đến " + fl.dst});
+    cell.appendChild(svg); box.appendChild(cell);
+    var max = 1; fl.points.forEach(function (p) { max = Math.max(max, p.rtt || 0); });
+    var top = Math.max(2, Math.ceil(max * 1.2));
+    var pts = fl.points.map(function (p) {
+      return {t: msOf(p.at), v: p.rtt === null ? null : p.rtt, loss: p.loss,
+              extra: ["RTT trung bình: " + (p.rtt === null ? "-" : Number(p.rtt).toFixed(2) + " ms"), "Mất gói: " + Number(p.loss).toFixed(0) + "%"]};
+    });
+    lineChart(svg, from, to, pts, {yMin: 0, yMax: top, yTicks: [0, Math.round(top / 2), top], left: 34,
+      marks: pts.filter(function (p) { return p.loss > 0; }), fmt: function (v) { return v.toFixed(2) + " ms"; }});
+  });
+}
+
+function drawTable(d) {
+  var sum = Object.keys(d.fix_outcomes).map(function (k) { return k + ": " + d.fix_outcomes[k]; }).join(", ");
+  $("fix-summary").textContent = "Kết quả tự sửa trong khoảng này: " + (sum || "không có lần nào") + ".";
+  table($("chart-table"), ["#", "Thiết bị", "Mức", "Thông điệp", "Mở lúc", "Đóng lúc"],
+    d.incidents.slice().reverse().map(function (i) {
+      return [{text: i.id}, {text: i.node}, {node: pill(i.severity, i.severity === "critical" ? "bad" : "warn")},
+              {text: i.message, cls: "msg"}, {text: hhmmss(msOf(i.opened_at))}, {text: i.closed_at ? hhmmss(msOf(i.closed_at)) : "còn mở"}];
+    }), "Không có sự cố nào trong khoảng này.");
+}
+
+function refreshCharts() {
+  var cards = document.querySelectorAll(".chartcard");
+  Array.prototype.forEach.call(cards, function (c) { c.classList.add("loading"); });
+  return getJSON("/api/history?range=" + chartRange).then(function (d) {
+    drawHealth(d); drawTimeline(d); drawBuckets(d); drawFlows(d); drawTable(d);
+    $("chart-meta").textContent = hhmmss(msOf(d.from)) + " – " + hhmmss(msOf(d.to)) + " · " + d.incidents.length + " sự cố";
+  }).then(function () {
+    Array.prototype.forEach.call(cards, function (c) { c.classList.remove("loading"); });
+  }, function (e) {
+    Array.prototype.forEach.call(cards, function (c) { c.classList.remove("loading"); });
+    throw e;
+  });
+}
+
+function initCharts() {
+  Array.prototype.forEach.call(document.querySelectorAll("#rangebar button"), function (b) {
+    b.addEventListener("click", function () {
+      chartRange = b.getAttribute("data-range");
+      Array.prototype.forEach.call(document.querySelectorAll("#rangebar button"), function (x) {
+        x.className = x === b ? "active" : "";
+      });
+      refresh();
+    });
+  });
+}
+
 function noRefresh() { return Promise.resolve(); }   // tab Thao tác không tự làm mới (giữ nguyên chữ đang nhập)
 
-var TABS = {overview: refreshOverview, map: refreshMap, incidents: refreshIncidents, fixes: refreshFixes,
+var TABS = {overview: refreshOverview, map: refreshMap, charts: refreshCharts, incidents: refreshIncidents, fixes: refreshFixes,
             measure: refreshMeasure, audit: refreshAudit, actions: noRefresh};
 
 function currentTab() {
@@ -710,7 +1204,24 @@ function refresh() {
 
 window.addEventListener("hashchange", function () { showTab(); refresh(); });
 $("only-open").addEventListener("change", refresh);
+function applyTheme(t) {
+  if (t === "dark") document.documentElement.setAttribute("data-theme", "dark");
+  else document.documentElement.removeAttribute("data-theme");
+  $("btn-theme").textContent = t === "dark" ? "Chế độ sáng" : "Chế độ tối";
+}
+function initTheme() {
+  var t = "light";
+  try { t = localStorage.getItem("netauto-theme") || "light"; } catch (e) { t = "light"; }
+  applyTheme(t);
+  $("btn-theme").addEventListener("click", function () {
+    var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem("netauto-theme", next); } catch (e) { /* không lưu được thì thôi */ }
+  });
+}
+initTheme();
 initActions();
+initCharts();
 showTab();
 refresh();
 setInterval(function () { if (!document.hidden) refresh(); }, REFRESH_MS);

@@ -100,6 +100,10 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
     def topology():
         return query(webdata.topology)
 
+    @app.get("/api/history")
+    def history(range: str | None = None):
+        return query(webdata.history, range)
+
     @app.get("/api/incidents")
     def incident_list(limit: int | None = None, only_open: bool = False):
         return query(webdata.incident_list, limit, only_open)
