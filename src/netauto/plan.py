@@ -72,7 +72,8 @@ def satisfied(step, device: dict) -> Optional[bool]:
     if kind == "addr":
         return step.command.split()[3] in ifaces.get(target, {}).get("addresses", [])
     if kind == "vlan-del-default":
-        return 1 not in ports.get(target, {})
+        # cổng chưa vào bridge thì chưa gỡ được: sau port-master nó sẽ mang VID 1 mặc định
+        return target in ports and 1 not in ports[target]
     if kind == "vlan-access":
         port, _, vid = target.split()
         v = ports.get(port, {}).get(int(vid))

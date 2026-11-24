@@ -150,6 +150,10 @@
   nav a:hover { color: var(--head-ink); }
   nav a.active { background: rgba(255,255,255,.16); color: var(--head-ink); }
   .panel[hidden] { display: none; }
+  .dpbox { margin-top: 4px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--line); border-left-width: 5px; background: var(--card); }
+  .dpbox.dp-info { border-left-color: var(--accent); } .dpbox.dp-ok { border-left-color: var(--ok); } .dpbox.dp-bad { border-left-color: var(--bad); }
+  .dptitle { font-weight: 600; margin-bottom: 4px; }
+  .dplist { margin: 0; padding-left: 20px; } .dplist li { margin: 2px 0; overflow-wrap: anywhere; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; }
   tr.click { cursor: pointer; }
   tr.click:hover td { background: var(--idle-bg); }
@@ -466,6 +470,27 @@
 
   <div id="tab-actions" class="panel" hidden>
     <div class="card">
+      <h2>Thêm phòng ban mới (VLAN)</h2>
+      <div class="muted" style="margin-bottom:10px">Nhập tên và số VLAN: hệ thống tự chọn subnet và gateway, tự tạo máy trạm trong lab, tự cấu hình router/switch và thêm luồng đo. Sơ đồ và tab Đo lường tự hiện phòng ban mới.</div>
+      <div class="toolbar">
+        <label>Tên phòng ban <input type="text" id="dp-name" maxlength="30" placeholder="vd. Tài chính" size="18"></label>
+        <label>VLAN <input type="number" id="dp-vlan" min="2" max="254" placeholder="40" style="width:80px"></label>
+        <label>Router <select id="dp-router"></select></label>
+        <button class="btn primary" id="btn-dp-preview">Xem trước</button>
+        <button class="btn danger" id="btn-dp-create" hidden>Xác nhận tạo</button>
+      </div>
+      <div id="dp-result"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Phòng ban hiện có</h2>
+      <div class="tablewrap"><table id="dp-list"></table></div>
+      <div id="dr-result" style="margin-top:10px"></div>
+      <div class="toolbar" style="margin-top:10px"><button class="btn danger" id="btn-dr-confirm" hidden>Xác nhận xóa</button></div>
+      <div class="muted" style="margin-top:8px">VLAN gốc của lab demo (10, 20, 30, 99) bị khóa; chỉ xóa được phòng ban thêm bằng form phía trên. Xóa sẽ gỡ cấu hình khỏi router/switch, xóa máy trạm và được ghi vào tab Kiểm toán.</div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
       <h2>Kế hoạch và áp dụng</h2>
       <div class="toolbar">
         <label>Thiết bị <select id="act-node"></select></label>
@@ -1212,6 +1237,119 @@ function initActions() {
   });
 }
 
+// ---- 32C: thêm phòng ban
+var dpPlanned = null;
+function dpValues() {
+  var v = parseInt($("dp-vlan").value, 10);
+  return {name: $("dp-name").value, vlan: isNaN(v) ? null : v, router: $("dp-router").value};
+}
+function dpReset() { dpPlanned = null; $("btn-dp-create").hidden = true; }
+function dpShow(title, tone, lines) {
+  var box = $("dp-result"); clear(box);
+  var c = el("div", "dpbox dp-" + tone);
+  c.appendChild(el("div", "dptitle", title));
+  var ul = el("ul", "dplist");
+  lines.forEach(function (t) { ul.appendChild(el("li", "", t)); });
+  c.appendChild(ul);
+  box.appendChild(c);
+}
+function initDepartment() {
+  getJSON("/api/topology").then(function (d) {
+    var sel = $("dp-router");
+    d.nodes.filter(function (n) { return n.role === "router"; }).forEach(function (n) {
+      var o = el("option", "", n.name); o.value = n.name; sel.appendChild(o);
+    });
+  });
+  ["dp-name", "dp-vlan", "dp-router"].forEach(function (id) {
+    $(id).addEventListener("input", dpReset);
+    $(id).addEventListener("change", dpReset);
+  });
+  $("btn-dp-preview").addEventListener("click", function () {
+    dpReset();
+    $("btn-dp-preview").disabled = true;
+    postJSON("/api/department/preview", dpValues()).then(function (d) {
+      if (!d.ok) { dpShow("Chưa thể tạo", "bad", d.errors); return; }
+      dpPlanned = dpValues();
+      dpShow("Hệ thống sẽ làm (chưa thay đổi gì)", "info", d.summary.concat(["Lệnh Docker:"], d.commands));
+      $("btn-dp-create").hidden = false;
+    }).catch(function (e) { dpShow("Không xem trước được", "bad", [e.message]); })
+      .then(function () { $("btn-dp-preview").disabled = false; });
+  });
+  $("btn-dp-create").addEventListener("click", function () {
+    if (!dpPlanned) return;
+    var body = Object.assign({}, dpPlanned, {confirm: true});
+    $("btn-dp-create").hidden = true; $("btn-dp-preview").disabled = true;
+    dpShow("Đang tạo phòng ban, có thể mất 30-60 giây...", "info", ["Không đóng trang này."]);
+    postJSON("/api/department", body).then(function (d) {
+      var lines = d.steps.map(function (s) { return (s.ok ? "✓ " : "✕ ") + s.label + (s.ok || !s.output ? "" : " — " + s.output); });
+      if (d.advice) lines.push("Cần làm thêm: " + d.advice);
+      dpShow(d.ok ? d.message : "Không thành công (" + d.stage + "): " + d.message, d.ok ? "ok" : "bad", lines);
+      refresh(); refreshDepartments();
+    }).catch(function (e) { dpShow("Không tạo được", "bad", [e.message]); })
+      .then(function () { $("btn-dp-preview").disabled = false; dpPlanned = null; });
+  });
+}
+
+// ---- 32F: danh sách phòng ban và xóa
+var drPlanned = null;
+function drReset() { drPlanned = null; $("btn-dr-confirm").hidden = true; }
+function drShow(title, tone, lines) {
+  var box = $("dr-result"); clear(box);
+  var c = el("div", "dpbox dp-" + tone);
+  c.appendChild(el("div", "dptitle", title));
+  var ul = el("ul", "dplist");
+  lines.forEach(function (t) { ul.appendChild(el("li", "", t)); });
+  c.appendChild(ul);
+  box.appendChild(c);
+}
+function refreshDepartments() {
+  return getJSON("/api/departments").then(function (d) {
+    var t = $("dp-list"); clear(t);
+    var head = el("tr", "");
+    ["VLAN", "Tên", "Router", "Subnet", "Máy trạm", ""].forEach(function (h) { head.appendChild(el("th", "", h)); });
+    t.appendChild(head);
+    d.items.forEach(function (r) {
+      var tr = el("tr", "");
+      [String(r.vlan), r.name, r.router, r.subnet, r.hosts.join(", ") || "-"].forEach(function (v) { tr.appendChild(el("td", "", v)); });
+      var td = el("td", "");
+      if (r.deletable) {
+        var b = el("button", "btn", "Xóa...");
+        b.addEventListener("click", function () { previewRemoval(r.vlan); });
+        td.appendChild(b);
+      } else {
+        td.appendChild(el("span", "muted", "🔒 gốc"));
+      }
+      tr.appendChild(td);
+      t.appendChild(tr);
+    });
+  });
+}
+function previewRemoval(vlan) {
+  drReset();
+  postJSON("/api/department/remove/preview", {vlan: vlan}).then(function (d) {
+    if (!d.ok) { drShow("Không thể xóa", "bad", d.errors); return; }
+    drPlanned = {vlan: vlan};
+    drShow("Hệ thống sẽ làm (chưa thay đổi gì)", "info", d.summary.concat(["Lệnh Docker:"], d.commands));
+    $("btn-dr-confirm").hidden = false;
+  }).catch(function (e) { drShow("Không xem trước được", "bad", [e.message]); });
+}
+function initDepartmentList() {
+  refreshDepartments();
+  $("btn-dr-confirm").addEventListener("click", function () {
+    if (!drPlanned) return;
+    var body = Object.assign({}, drPlanned, {confirm: true});
+    drReset();
+    drShow("Đang xóa phòng ban, có thể mất 30-60 giây...", "info", ["Không đóng trang này."]);
+    postJSON("/api/department/remove", body).then(function (d) {
+      var lines = d.steps.map(function (s) { return (s.ok ? "✓ " : "✕ ") + s.label + (s.ok || !s.output ? "" : " — " + s.output); });
+      if (d.advice) lines.push("Cần làm thêm: " + d.advice);
+      drShow(d.ok ? d.message : "Không thành công (" + d.stage + "): " + d.message, d.ok ? "ok" : "bad", lines);
+      refresh();
+    }).catch(function (e) { drShow("Không xóa được", "bad", [e.message]); })
+      .then(function () { refreshDepartments(); });
+  });
+}
+
 // ---- 29A: sơ đồ mạng (SVG dựng bằng createElementNS và textContent)
 var SVGNS = "http://www.w3.org/2000/svg";
 var mapData = null;
@@ -1634,6 +1772,8 @@ function initTheme() {
 }
 initTheme();
 initActions();
+initDepartment();
+initDepartmentList();
 initCharts();
 showTab();
 refresh();

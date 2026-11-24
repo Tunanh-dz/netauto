@@ -58,9 +58,11 @@ def run_plan(node, db_path: str, timeout_s: float = PLAN_TIMEOUT_S):
     return _run(["netauto.plan", *(["--node", node] if node else [])], timeout_s)
 
 
-def run_apply(node, db_path: str, timeout_s: float = APPLY_TIMEOUT_S):
+def run_apply(node, db_path: str, timeout_s: float = APPLY_TIMEOUT_S, prune: bool = False):
     """Áp dụng thật (--yes). Cả cửa sổ bảo trì lẫn nhật ký kiểm toán dùng đúng CSDL của web."""
     args = ["netauto.apply", "--yes", "--db", db_path, "--audit-db", db_path]
+    if prune:
+        args.append("--prune")
     if node:
         args += ["--node", node]
     return _run(args, timeout_s)

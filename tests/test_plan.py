@@ -85,6 +85,14 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(changes(plan("h-sales", dev)),
                          {("remove", "addr-extra", "eth1 192.168.10.50/24")})
 
+    def test_port_not_yet_in_bridge_still_needs_default_vlan_removed(self):
+        # cổng mới (vd. máy trạm vừa thêm) chưa vào bridge: sau port-master nó sẽ mang VID 1 mặc định,
+        # nên bước gỡ VID 1 phải nằm trong kế hoạch, nếu không apply sẽ báo "chưa hội tụ"
+        ports = {k: v for k, v in SW1_GOOD.items() if k != "eth3"}
+        got = changes(plan("sw1", sw1(ports)))
+        self.assertIn(("add", "port-master", "eth3"), got)
+        self.assertIn(("remove", "vlan-del-default", "eth3"), got)
+
     def test_unreachable_device_is_blocked(self):
         dev = device("sw1", [], reachable=False)
         self.assertEqual({i.action for i in plan("sw1", dev)}, {"blocked"})

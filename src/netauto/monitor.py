@@ -1,4 +1,5 @@
 """Giám sát định kỳ: thu thập, kiểm tra intent, đo ping, quản lý sự cố, tính điểm."""
+import os
 import time
 from dataclasses import asdict
 from netauto import db, health, incidents, maintenance, perf, probe, runs, timefmt, service
@@ -6,6 +7,30 @@ from netauto.check import check_snapshot
 from netauto.collector import collect_all
 from netauto.diff import diff_snapshots
 from netauto.intent import INTENT_PATH, ignore_interfaces, load_intent
+
+
+def intent_stamp(path: str):
+    """Dấu hiệu file intent đã đổi (thời điểm sửa, kích thước); None nếu không đọc được."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def refresh_intent(path: str, intent: dict, stamp):
+    """Nạp lại intent nếu file đã đổi (vd. web vừa thêm phòng ban). Trả (intent, dấu mới, thông báo hoặc None).
+    File hỏng hoặc không đọc được thì giữ intent cũ và chỉ cảnh báo một lần cho mỗi phiên bản file."""
+    now = intent_stamp(path)
+    if now == stamp or now is None:
+        return intent, stamp, None
+    try:
+        new = load_intent(path)
+        ignore_interfaces(new)
+        probe.flows_from_intent(new)
+    except Exception as exc:                      # intent sai không được làm sập monitor
+        return intent, now, f"!! Intent mới không dùng được, giữ intent cũ: {str(exc).splitlines()[0]}"
+    return new, now, "(intent đã đổi: nạp lại, từ vòng này so sánh theo intent mới)"
 
 
 def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
@@ -18,6 +43,7 @@ def run_monitor(interval: int = 10, count: int = 0, db_path: str = db.DB_PATH,
 
 def _run_loop(interval: int, count: int, db_path: str, intent_path: str) -> None:
     intent = load_intent(intent_path)
+    stamp = intent_stamp(intent_path)
     ignore = ignore_interfaces(intent)       # cổng quản lý: không đưa vào so sánh
     probe.flows_from_intent(intent)          # báo lỗi sớm nếu mục probes sai
     conn = incidents.connect(db_path)
@@ -45,6 +71,11 @@ def _run_loop(interval: int, count: int, db_path: str, intent_path: str) -> None
     shown_day = None                         # in dòng ngày mỗi khi sang ngày mới
     try:
         while True:
+            intent, stamp, note = refresh_intent(intent_path, intent, stamp)
+            if note:
+                print(note)
+                if note.startswith("("):
+                    ignore = ignore_interfaces(intent)
             data = asdict(collect_all())
             sid = db.save_snapshot(conn, data)
             at = data["taken_at"]

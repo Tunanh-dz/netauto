@@ -23,7 +23,8 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from netauto import actions, db, maintenance, webdata
+from netauto import actions, db, department, deptexec, maintenance, webdata
+from netauto.intent import INTENT_PATH
 
 INDEX = Path(__file__).resolve().parent / "static" / "index.html"
 TOKEN_PLACEHOLDER = "__NETAUTO_TOKEN__"
@@ -46,11 +47,24 @@ class OpenBody(BaseModel):
     ttl_s: int = maintenance.DEFAULT_TTL_S
 
 
+class DepartmentBody(BaseModel):
+    name: str = ""
+    vlan: int | None = None
+    router: str = ""
+    confirm: bool = False
+
+
+class RemoveBody(BaseModel):
+    vlan: int | None = None
+    confirm: bool = False
+
+
 class CloseBody(BaseModel):
     id: int | None = None
 
 
-def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=actions) -> FastAPI:
+def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=actions,
+               dept=deptexec, intent_path: str = INTENT_PATH, lab_path: str = deptexec.LAB_PATH) -> FastAPI:
     app = FastAPI(title="netauto", description="API của hệ thống Network Automation")
     token = token or secrets.token_urlsafe(16)
     apply_gate = threading.Lock()                 # tối đa một lần áp dụng từ web cùng lúc
@@ -182,6 +196,94 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
     @app.post("/api/maintenance/close", dependencies=[Depends(guard)])
     def maintenance_close(body: CloseBody):
         return {"closed": query(actions.close_maintenance, body.id, db_path)}
+
+    # ------------------------------------------------------------ thêm phòng ban (32B)
+    def dept_plan(body: DepartmentBody) -> dict:
+        try:
+            with open(intent_path, encoding="utf-8") as f1, open(lab_path, encoding="utf-8") as f2:
+                intent_text, lab_text = f1.read(), f2.read()
+        except OSError as exc:
+            raise HTTPException(500, f"Không đọc được intent hoặc topology: {exc}") from None
+        if body.vlan is None:
+            raise HTTPException(400, "Thiếu số VLAN.")
+        return department.plan_department(intent_text, lab_text, body.name, body.vlan, body.router)
+
+    @app.post("/api/department/preview", dependencies=[Depends(guard)])
+    def department_preview(body: DepartmentBody):
+        plan = dept_plan(body)
+        if not plan["ok"]:
+            return {"ok": False, "errors": plan["errors"]}
+        return {"ok": True, "errors": [], "spec": plan["spec"], "summary": plan["summary"],
+                "commands": [" ".join(s["argv"][:6]) + " ..." if len(s["argv"]) > 6 else " ".join(s["argv"])
+                             for s in plan["steps"]]}
+
+    @app.post("/api/department", dependencies=[Depends(guard)])
+    def department_create(body: DepartmentBody):
+        if not body.confirm:
+            raise HTTPException(400, "Tạo phòng ban thật phải gửi confirm=true.")
+        if not apply_gate.acquire(blocking=False):
+            raise HTTPException(409, "Đang có một thao tác thay đổi mạng khác chạy.")
+        try:
+            plan = dept_plan(body)                     # lập lại kế hoạch: không tin bản xem trước cũ
+            if not plan["ok"]:
+                raise HTTPException(400, "; ".join(plan["errors"]))
+            try:
+                query(actions.check_apply_allowed, maintenance.now())
+            except actions.Busy as exc:
+                raise HTTPException(409, str(exc)) from None
+            conn = db.connect(db_path)
+            try:
+                maintenance.ensure_schema(conn)
+                return dept.create_department(plan, conn=conn, db_path=db_path, intent_path=intent_path,
+                                              lab_path=lab_path, run_apply=runner.run_apply)
+            finally:
+                conn.close()
+        finally:
+            apply_gate.release()
+
+    # ------------------------------------------------------------ xóa phòng ban (32F)
+    def read_texts():
+        try:
+            with open(intent_path, encoding="utf-8") as f1, open(lab_path, encoding="utf-8") as f2:
+                return f1.read(), f2.read()
+        except OSError as exc:
+            raise HTTPException(500, f"Không đọc được intent hoặc topology: {exc}") from None
+
+    @app.get("/api/departments")
+    def departments():
+        return {"items": department.list_departments(*read_texts())}
+
+    @app.post("/api/department/remove/preview", dependencies=[Depends(guard)])
+    def department_remove_preview(body: RemoveBody):
+        plan = department.plan_removal(*read_texts(), body.vlan)
+        if not plan["ok"]:
+            return {"ok": False, "errors": plan["errors"]}
+        return {"ok": True, "errors": [], "spec": plan["spec"], "summary": plan["summary"],
+                "commands": [" ".join(c) for c in plan["steps"]]}
+
+    @app.post("/api/department/remove", dependencies=[Depends(guard)])
+    def department_remove(body: RemoveBody):
+        if not body.confirm:
+            raise HTTPException(400, "Xóa phòng ban thật phải gửi confirm=true.")
+        if not apply_gate.acquire(blocking=False):
+            raise HTTPException(409, "Đang có một thao tác thay đổi mạng khác chạy.")
+        try:
+            plan = department.plan_removal(*read_texts(), body.vlan)   # lập lại, không tin bản xem trước cũ
+            if not plan["ok"]:
+                raise HTTPException(400, "; ".join(plan["errors"]))
+            try:
+                query(actions.check_apply_allowed, maintenance.now())
+            except actions.Busy as exc:
+                raise HTTPException(409, str(exc)) from None
+            conn = db.connect(db_path)
+            try:
+                maintenance.ensure_schema(conn)
+                return dept.remove_department(plan, conn=conn, db_path=db_path, intent_path=intent_path,
+                                              lab_path=lab_path, run_apply=runner.run_apply)
+            finally:
+                conn.close()
+        finally:
+            apply_gate.release()
 
     return app
 

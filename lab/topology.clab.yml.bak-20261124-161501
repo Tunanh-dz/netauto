@@ -1,0 +1,32 @@
+name: entlab
+
+topology:
+  defaults:
+    kind: linux
+
+  nodes:
+    r1:
+      image: quay.io/frrouting/frr:10.4.5
+      binds:
+        - configs/daemons:/etc/frr/daemons
+    r2:
+      image: quay.io/frrouting/frr:10.4.5
+      binds:
+        - configs/daemons:/etc/frr/daemons
+
+    sw1: { image: nicolaka/netshoot:latest, cmd: sleep infinity }
+    sw2: { image: nicolaka/netshoot:latest, cmd: sleep infinity }
+
+    h-sales: { image: nicolaka/netshoot:latest, cmd: sleep infinity }
+    h-guest: { image: nicolaka/netshoot:latest, cmd: sleep infinity }
+    h-eng:   { image: nicolaka/netshoot:latest, cmd: sleep infinity }
+    h-mgmt:  { image: nicolaka/netshoot:latest, cmd: sleep infinity }
+
+  links:
+    - endpoints: ["r1:eth2",  "r2:eth2"]
+    - endpoints: ["r1:eth1",  "sw1:eth1"]
+    - endpoints: ["sw1:eth2", "h-sales:eth1"]
+    - endpoints: ["sw1:eth3", "h-guest:eth1"]
+    - endpoints: ["r2:eth1",  "sw2:eth1"]
+    - endpoints: ["sw2:eth2", "h-eng:eth1"]
+    - endpoints: ["sw2:eth3", "h-mgmt:eth1"]
