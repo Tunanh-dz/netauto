@@ -154,6 +154,26 @@
   .dpbox.dp-info { border-left-color: var(--accent); } .dpbox.dp-ok { border-left-color: var(--ok); } .dpbox.dp-bad { border-left-color: var(--bad); }
   .dptitle { font-weight: 600; margin-bottom: 4px; }
   .dplist { margin: 0; padding-left: 20px; } .dplist li { margin: 2px 0; overflow-wrap: anywhere; }
+  .subnav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; padding: 6px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  .subbtn { flex: 1 1 200px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 14px; border: 1px solid transparent; border-radius: 8px;
+            background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+  .subbtn b { font-size: 14px; } .subbtn span { font-size: 12px; color: var(--muted); }
+  .subbtn:hover { background: var(--idle-bg); }
+  .subbtn[aria-selected="true"] { background: var(--accent); border-color: var(--accent); }
+  .subbtn[aria-selected="true"] b, .subbtn[aria-selected="true"] span { color: #fff; }
+  .subbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .subpane .card + .card { margin-top: 16px; }
+  .cfbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+  .cfdevices { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cfdev { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; }
+  .cfdev small { color: var(--muted); margin-left: 4px; }
+  .cfdev[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; } .cfdev[aria-selected="true"] small { color: #fff; }
+  .cfsec { background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+  .cfsec.bad { border-left: 5px solid var(--bad); }
+  .cfsec summary { padding: 10px 14px; font-weight: 600; cursor: pointer; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .cfsec summary .cfn { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--muted); }
+  .cfsec .cfcmd { font: 12px ui-monospace, Menlo, Consolas, monospace; color: var(--muted); font-weight: 400; }
+  .cfsec pre { margin: 0; padding: 10px 12px; border-top: 1px solid var(--line); max-height: 420px; overflow: auto; font: 12.5px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; }
   tr.click { cursor: pointer; }
   tr.click:hover td { background: var(--idle-bg); }
@@ -165,7 +185,7 @@
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
   .btn:disabled { opacity: .5; cursor: wait; }
-  input[type=text], input[type=number], select { font: inherit; padding: 5px 8px; border-radius: 8px;
+  input[type=text], input[type=number], input[type=password], select { font: inherit; padding: 5px 8px; border-radius: 8px;
          border: 1px solid var(--line); background: var(--card); color: var(--ink); }
   pre.out { margin: 12px 0 0; padding: 12px 14px; background: var(--card); border: 1px solid var(--line);
             border-radius: 12px; overflow-x: auto; white-space: pre-wrap; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; }
@@ -290,13 +310,17 @@
     <a href="#fixes" data-tab="fixes">Tự sửa</a>
     <a href="#measure" data-tab="measure">Đo lường</a>
     <a href="#audit" data-tab="audit">Kiểm toán</a>
+    <a href="#config" data-tab="config">Cấu hình</a>
     <a href="#actions" data-tab="actions">Thao tác</a>
+    <a href="#users" data-tab="users" hidden>Tài khoản</a>
   </nav>
   <span id="monitor" class="pill">Monitor: ...</span>
   <span id="maint" class="pill warn" hidden>Đang bảo trì</span>
   <span id="breaker" class="pill bad" hidden>Cầu chì tự sửa đã ngắt</span>
   <span class="spacer"></span>
   <span id="updated" class="muted">Chưa có dữ liệu</span>
+  <span id="whoami" class="pill" hidden></span>
+  <button class="themebtn" id="btn-logout" type="button" hidden>Đăng xuất</button>
   <button class="themebtn" id="btn-theme" type="button" aria-label="Đổi chế độ sáng hoặc tối">Chế độ tối</button>
 </header>
 <main id="app">
@@ -468,7 +492,51 @@
     <div id="au-detail"></div>
   </div>
 
+  <div id="tab-config" class="panel" hidden>
+    <div class="cfbar">
+      <div id="cf-devices" class="cfdevices" role="tablist" aria-label="Thiết bị"></div>
+      <button class="btn" id="btn-cf-reload" type="button">Làm mới</button>
+    </div>
+    <div id="cf-meta" class="muted" style="margin:8px 0 14px"></div>
+    <div class="subnav" id="cf-subnav" role="tablist" aria-label="Loại cấu hình">
+      <button class="subbtn" id="cf-view-live" role="tab" data-view="live" aria-selected="true"><b>Đang chạy trên thiết bị</b><span>đọc trực tiếp từ thiết bị ngay lúc này</span></button>
+      <button class="subbtn" id="cf-view-intent" role="tab" data-view="intent" aria-selected="false"><b>Mong muốn (từ intent)</b><span>lệnh hệ thống sẽ áp dụng theo file intent</span></button>
+    </div>
+    <div id="cf-live" data-view="live"></div>
+    <div id="cf-intent" data-view="intent" hidden></div>
+    <div class="muted" style="margin-top:12px">Chỉ đọc: hệ thống chạy các lệnh xem cố định trên thiết bị, không thay đổi gì. Dòng chứa mật khẩu bị che. Muốn thay đổi cấu hình, dùng tab Thao tác.</div>
+  </div>
+
+  <div id="tab-users" class="panel" hidden>
+    <div class="card">
+      <h2>Tài khoản</h2>
+      <div class="tablewrap"><table id="us-list"></table></div>
+      <div id="us-msg" style="margin-top:10px"></div>
+      <div class="muted" style="margin-top:8px">Chỉ xem: đọc mọi thứ. Vận hành: thêm áp dụng cấu hình, thêm/xóa phòng ban, bảo trì. Quản trị: thêm quản lý tài khoản. Mọi thay đổi tài khoản đều được ghi vào tab Kiểm toán.</div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Thêm tài khoản</h2>
+      <div class="toolbar">
+        <label>Tên đăng nhập <input type="text" id="us-add-name" maxlength="32" placeholder="vd. vanhanh" size="14" autocomplete="off" autocapitalize="none"></label>
+        <label>Mật khẩu <input type="password" id="us-add-pass" autocomplete="new-password" placeholder="≥ 8 ký tự" size="14"></label>
+        <label>Vai trò <select id="us-add-role"><option value="viewer">Chỉ xem</option><option value="operator">Vận hành</option><option value="admin">Quản trị</option></select></label>
+        <button class="btn primary" id="btn-us-add">Thêm</button>
+      </div>
+    </div>
+  </div>
+
   <div id="tab-actions" class="panel" hidden>
+    <div id="ro-note" class="dpbox dp-info" style="margin-bottom:16px" hidden>
+      <div class="dptitle">Tài khoản của bạn chỉ có quyền xem</div>
+      <div>Các thao tác thay đổi mạng cần vai trò Vận hành hoặc Quản trị. Bạn vẫn xem được mọi trang khác.</div>
+    </div>
+    <div class="subnav" id="act-subnav" role="tablist" aria-label="Nhóm thao tác">
+      <button class="subbtn" role="tab" data-sub="dept" aria-selected="true"><b>Phòng ban</b><span>thêm, xóa VLAN và máy trạm</span></button>
+      <button class="subbtn" role="tab" data-sub="plan" aria-selected="false"><b>Kế hoạch và áp dụng</b><span>xem trước, áp dụng cấu hình</span></button>
+      <button class="subbtn" role="tab" data-sub="maint" aria-selected="false"><b>Bảo trì</b><span>cửa sổ im cảnh báo</span></button>
+    </div>
+
+    <div class="subpane" data-sub="dept">
     <div class="card">
       <h2>Thêm phòng ban mới (VLAN)</h2>
       <div class="muted" style="margin-bottom:10px">Nhập tên và số VLAN: hệ thống tự chọn subnet và gateway, tự tạo máy trạm trong lab, tự cấu hình router/switch và thêm luồng đo. Sơ đồ và tab Đo lường tự hiện phòng ban mới.</div>
@@ -489,8 +557,10 @@
       <div class="toolbar" style="margin-top:10px"><button class="btn danger" id="btn-dr-confirm" hidden>Xác nhận xóa</button></div>
       <div class="muted" style="margin-top:8px">VLAN gốc của lab demo (10, 20, 30, 99) bị khóa; chỉ xóa được phòng ban thêm bằng form phía trên. Xóa sẽ gỡ cấu hình khỏi router/switch, xóa máy trạm và được ghi vào tab Kiểm toán.</div>
     </div>
+    </div><!-- /subpane -->
 
-    <div class="card" style="margin-top:16px">
+    <div class="subpane" data-sub="plan" hidden>
+    <div class="card">
       <h2>Kế hoạch và áp dụng</h2>
       <div class="toolbar">
         <label>Thiết bị <select id="act-node"></select></label>
@@ -506,8 +576,10 @@
       <pre class="out" id="act-out" hidden></pre>
       <div class="muted" style="margin-top:8px">Áp dụng thật sẽ thay đổi thiết bị, có kiểm chứng và tự hoàn tác, và được ghi vào tab Kiểm toán với người thực hiện "netauto-web".</div>
     </div>
+    </div><!-- /subpane -->
 
-    <div class="card" style="margin-top:16px">
+    <div class="subpane" data-sub="maint" hidden>
+    <div class="card">
       <h2>Cửa sổ bảo trì</h2>
       <div class="toolbar">
         <label>Thiết bị <select id="mt-node"></select></label>
@@ -519,6 +591,7 @@
       <div id="mt-result" class="muted"></div>
       <div class="muted" style="margin-top:8px">Trong cửa sổ bảo trì, monitor vẫn thu thập nhưng giữ lại các lỗi thuộc phạm vi đó, và bộ tự sửa không can thiệp. Cửa sổ tự hết hạn.</div>
     </div>
+    </div><!-- /subpane -->
   </div>
 </main>
 
@@ -555,6 +628,7 @@ function tone(grade) {
 }
 function getJSON(path) {
   return fetch(path).then(function (r) {
+    if (r.status === 401) { location.reload(); throw new Error("Hết phiên đăng nhập"); }      // trở về trang đăng nhập
     if (!r.ok) throw new Error(path + " -> " + r.status);
     return r.json();
   });
@@ -1058,24 +1132,62 @@ var ACTOR_NAME = {auto: "Máy tự sửa", web: "Giao diện web", manual: "Dòn
 var auState = {data: null, result: "all", actor: "all", expanded: {}, detail: {}};
 
 function stepStatusClass(st) { return st === "XONG" ? "done" : st === "LỖI" ? "failed" : "exists"; }
+var RESULT_HELP = {
+  "ĐĂNG NHẬP": "Người dùng đăng nhập thành công vào giao diện web.",
+  "ĐĂNG NHẬP SAI": "Đăng nhập thất bại (sai tên hoặc sai mật khẩu). Sai quá 5 lần liên tiếp thì tài khoản bị khóa 5 phút.",
+  "ĐĂNG NHẬP BỊ KHÓA": "Có người thử đăng nhập khi tài khoản đang bị khóa tạm thời vì sai nhiều lần.",
+  "THÊM PHÒNG BAN": "Phòng ban mới được tạo từ giao diện web: thêm VLAN, tạo máy trạm trong lab, ghi intent, áp dụng cấu hình.",
+  "THÊM PHÒNG BAN LỖI": "Thêm phòng ban không thành công; hệ thống đã hoàn tác phần đã làm.",
+  "XÓA PHÒNG BAN": "Phòng ban được xóa từ giao diện web: gỡ cấu hình khỏi thiết bị, xóa máy trạm, cập nhật intent.",
+  "XÓA PHÒNG BAN LỖI": "Xóa phòng ban không thành công; hệ thống đã khôi phục tệp và tạo lại máy trạm.",
+  "TÀI KHOẢN TẠO": "Quản trị viên tạo một tài khoản mới.",
+  "TÀI KHOẢN ĐỔI TÊN": "Quản trị viên đổi tên đăng nhập của một tài khoản.",
+  "TÀI KHOẢN ĐỔI QUYỀN": "Quản trị viên đổi vai trò của một tài khoản.",
+  "TÀI KHOẢN KHÓA": "Quản trị viên khóa một tài khoản; các phiên đang đăng nhập của tài khoản đó bị kết thúc.",
+  "TÀI KHOẢN MỞ KHÓA": "Quản trị viên mở khóa một tài khoản.",
+  "TÀI KHOẢN ĐỔI MẬT KHẨU": "Mật khẩu của một tài khoản được đổi; các phiên đang đăng nhập của tài khoản đó bị kết thúc.",
+  "BẢO TRÌ MỞ": "Mở cửa sổ bảo trì: giám sát vẫn thu thập nhưng giữ lại cảnh báo thuộc phạm vi đó, tự sửa không can thiệp.",
+  "BẢO TRÌ ĐÓNG": "Cửa sổ bảo trì được đóng."
+};
+var DETAIL_LABEL = {role: "Vai trò", user: "Tài khoản", new_name: "Tên mới", name: "Tên phòng ban", vlan: "VLAN",
+  router: "Router", host: "Máy trạm", switch: "Switch", port: "Cổng", why: "Nguyên nhân", window: "Cửa sổ bảo trì #",
+  windows: "Cửa sổ đã đóng", ttl: "Thời gian (giây)", spec: "Thông số"};
+var DETAIL_SKIP = {reason: 1, flows_before: 1, flows_after: 1, regressions: 1, steps: 1, undo: 1};
+
+function detailValue(key, v) {
+  if (key === "role" && ROLE_VN[v]) return ROLE_VN[v];
+  if (Array.isArray(v)) return v.join(", ");
+  if (v !== null && typeof v === "object") {
+    return Object.keys(v).map(function (k) { return (DETAIL_LABEL[k] || k) + " " + detailValue(k, v[k]); }).join("; ");
+  }
+  return String(v);
+}
+
 function renderAuditDetail(box, entry) {
   var det = entry.detail || {};
   var d = el("div", "audet");
+  if (RESULT_HELP[entry.result]) d.appendChild(el("div", "", RESULT_HELP[entry.result]));
   if (det.reason) d.appendChild(el("div", "", "Lý do: " + det.reason));
+  Object.keys(det).forEach(function (k) {
+    if (DETAIL_SKIP[k] || det[k] === null || det[k] === "") return;
+    d.appendChild(el("div", "", (DETAIL_LABEL[k] || k) + ": " + detailValue(k, det[k])));
+  });
   if (det.flows_before !== undefined || det.flows_after !== undefined)
     d.appendChild(el("div", "", "Luồng thông: trước " + (det.flows_before === undefined ? "?" : det.flows_before) +
       ", sau " + (det.flows_after === undefined ? "?" : det.flows_after)));
   if (det.regressions && det.regressions.length) d.appendChild(el("div", "", "Luồng xấu đi: " + det.regressions.join("; ")));
-  d.appendChild(el("h4", "", "Các bước"));
-  var ul = el("ul", "austeplist");
-  (det.steps || []).forEach(function (st) {
-    var li = el("li");
-    li.appendChild(el("span", "st " + stepStatusClass(st.status), st.status));
-    li.appendChild(document.createTextNode(" " + st.node + " · " + st.label + (st.note ? "  # " + st.note : "")));
-    ul.appendChild(li);
-  });
-  if (!(det.steps || []).length) ul.appendChild(el("li", "muted", "(không có bước nào)"));
-  d.appendChild(ul);
+  if (Array.isArray(det.steps)) {
+    d.appendChild(el("h4", "", "Các bước"));
+    var ul = el("ul", "austeplist");
+    det.steps.forEach(function (st) {
+      var li = el("li");
+      li.appendChild(el("span", "st " + stepStatusClass(st.status), st.status));
+      li.appendChild(document.createTextNode(" " + st.node + " · " + st.label + (st.note ? "  # " + st.note : "")));
+      ul.appendChild(li);
+    });
+    if (!det.steps.length) ul.appendChild(el("li", "muted", "(không có bước nào)"));
+    d.appendChild(ul);
+  }
   if (det.undo && det.undo.length) {
     d.appendChild(el("h4", "", "Hoàn tác"));
     var u = el("ul", "austeplist");
@@ -1114,7 +1226,7 @@ function auditCard(r) {
       + (r.undo_count ? " · " + r.undo_count + " lệnh hoàn tác" : "")));
   }
   var open = !!auState.expanded[r.id];
-  var t = el("button", "evtoggle", (open ? "▾ " : "▸ ") + "Chi tiết các bước");
+  var t = el("button", "evtoggle", (open ? "▾ " : "▸ ") + "Chi tiết");
   t.type = "button"; t.setAttribute("aria-expanded", String(open));
   t.addEventListener("click", function () {
     auState.expanded[r.id] = !open;
@@ -1173,6 +1285,7 @@ function postJSON(path, body) {
     headers: {"Content-Type": "application/json", "X-NetAuto-Token": TOKEN},
     body: JSON.stringify(body)
   }).then(function (r) {
+    if (r.status === 401) { location.reload(); throw new Error("Hết phiên đăng nhập"); }
     return r.json().catch(function () { return {}; }).then(function (data) {
       if (!r.ok) throw new Error(data.detail ? String(data.detail) : "Lỗi " + r.status);
       return data;
@@ -1235,6 +1348,193 @@ function initActions() {
       })
       .catch(function (e) { $("mt-result").textContent = "Không đóng được: " + e.message; });
   });
+}
+
+// ---- 33D: tab Cấu hình (chỉ đọc)
+var cfNode = null, cfSeq = 0, cfDevicesBuilt = false;
+var CF_ROLE = {router: "Router", switch: "Switch", host: "Máy trạm"};
+
+function cfSection(title, command, text, ok, note) {
+  var box = el("details", "cfsec" + (ok ? "" : " bad"));
+  box.open = true;                                           // mở sẵn, bấm tiêu đề để thu gọn
+  var body = text && text.trim() ? text.replace(/\s+$/, "") : "";
+  var head = el("summary", "");
+  head.appendChild(el("span", "", (ok ? "" : "✕ ") + title));
+  if (command) head.appendChild(el("span", "cfcmd", "$ " + command));
+  head.appendChild(el("span", "cfn", body ? body.split("\n").length + " dòng" : "trống"));
+  box.appendChild(head);
+  box.appendChild(el("pre", "", body || "(trống)"));
+  if (note) box.appendChild(el("div", "muted", note));
+  return box;
+}
+
+var cfView = "live";
+function cfChooseView(name) {
+  cfView = name;
+  Array.prototype.forEach.call(document.querySelectorAll("#cf-subnav .subbtn"), function (b) {
+    b.setAttribute("aria-selected", b.getAttribute("data-view") === name ? "true" : "false");
+  });
+  $("cf-live").hidden = (name !== "live");
+  $("cf-intent").hidden = (name !== "intent");
+}
+
+function buildConfigDevices(nodes) {
+  var box = $("cf-devices"); clear(box);
+  ["router", "switch", "host"].forEach(function (role) {
+    nodes.filter(function (n) { return n.role === role; }).forEach(function (n) {
+      var b = el("button", "cfdev"); b.type = "button"; b.setAttribute("role", "tab");
+      b.setAttribute("data-node", n.name); b.setAttribute("aria-selected", n.name === cfNode ? "true" : "false");
+      b.appendChild(document.createTextNode(n.name)); b.appendChild(el("small", "", CF_ROLE[role]));
+      b.addEventListener("click", function () { cfNode = n.name; refreshConfig(); });
+      box.appendChild(b);
+    });
+  });
+  cfDevicesBuilt = true;
+}
+
+function refreshConfig() {
+  var seq = ++cfSeq;
+  var devices = cfDevicesBuilt ? Promise.resolve(null) : getJSON("/api/topology").then(function (d) { return d.nodes; });
+  return devices.then(function (nodes) {
+    if (nodes) { if (!cfNode && nodes.length) cfNode = nodes[0].name; buildConfigDevices(nodes); }
+    Array.prototype.forEach.call(document.querySelectorAll("#cf-devices .cfdev"), function (b) {
+      b.setAttribute("aria-selected", b.getAttribute("data-node") === cfNode ? "true" : "false");
+    });
+    if (!cfNode) return null;
+    $("cf-meta").textContent = "Đang đọc cấu hình của " + cfNode + "...";
+    return getJSON("/api/config/" + encodeURIComponent(cfNode));
+  }).then(function (v) {
+    if (!v || seq !== cfSeq) return;                         // bỏ kết quả cũ nếu đã chọn thiết bị khác
+    $("cf-meta").textContent = v.node + " (" + CF_ROLE[v.role] + ") · đọc lúc " + stamp(v.taken_at);
+    var live = $("cf-live"); clear(live);
+    v.sections.forEach(function (s) {
+      live.appendChild(cfSection(s.title, s.command, s.output, s.ok, s.truncated ? "Kết quả dài, đã cắt bớt." : ""));
+    });
+    var want = $("cf-intent"); clear(want);
+    if (v.intended.shell.length) want.appendChild(cfSection("Lệnh shell sẽ áp dụng", "", v.intended.shell.join("\n"), true, ""));
+    if (v.intended.vtysh) want.appendChild(cfSection("Cấu hình FRR (vtysh) sẽ áp dụng", "", v.intended.vtysh, true, ""));
+    if (!v.intended.shell.length && !v.intended.vtysh) want.appendChild(el("div", "muted", "Intent không sinh lệnh nào cho thiết bị này."));
+  }).catch(function (e) {
+    if (seq === cfSeq) $("cf-meta").textContent = "Không đọc được cấu hình: " + e.message;
+  });
+}
+
+// ---- 33C: đăng nhập, vai trò, tài khoản
+var ME = {auth: false, user: null, role: "admin", role_name: "Quản trị"};
+var ROLE_VN = {viewer: "Chỉ xem", operator: "Vận hành", admin: "Quản trị"};
+
+function applyRole() {
+  var viewer = ME.role === "viewer";
+  Array.prototype.forEach.call(document.querySelectorAll("#tab-actions .subpane"), function (p) {
+    if (viewer) p.setAttribute("inert", ""); else p.removeAttribute("inert");      // inert: không bấm được cả bằng bàn phím
+    p.style.opacity = viewer ? "0.55" : "";
+  });
+  $("ro-note").hidden = !viewer;
+  document.querySelector('#nav a[data-tab="users"]').hidden = ME.role !== "admin";
+  var who = $("whoami");
+  if (ME.auth && ME.user) {
+    who.hidden = false; who.className = "pill"; who.textContent = ME.user.username + " · " + ROLE_VN[ME.role];
+    $("btn-logout").hidden = false;
+  } else {
+    who.hidden = false; who.className = "pill warn"; who.textContent = "Chưa bật đăng nhập";
+    $("btn-logout").hidden = true;
+  }
+}
+
+function initAuth() {
+  $("btn-logout").addEventListener("click", function () {
+    postJSON("/api/logout", {}).catch(function () {}).then(function () { location.reload(); });
+  });
+  getJSON("/api/me").then(function (me) {
+    ME = me; applyRole(); showTab(); refresh();
+  }).catch(function () {});
+  $("btn-us-add").addEventListener("click", function () {
+    var name = $("us-add-name").value;
+    userCall("/api/users", {username: name, password: $("us-add-pass").value, role: $("us-add-role").value},
+             "Đã thêm tài khoản " + name.trim().toLowerCase() + ".").then(function (ok) {
+      if (ok) { $("us-add-name").value = ""; $("us-add-pass").value = ""; }
+    });
+  });
+}
+
+function usMsg(text, tone) {
+  var box = $("us-msg"); clear(box);
+  if (text) box.appendChild(el("div", "dpbox dp-" + tone, text));
+}
+
+function userCall(path, body, okText) {
+  return postJSON(path, body).then(function () { usMsg(okText, "ok"); return refreshUsers().then(function () { return true; }); })
+    .catch(function (e) { usMsg(e.message, "bad"); return false; });
+}
+
+function userRow(u, table) {
+  var tr = el("tr", "");
+  tr.appendChild(el("td", "", u.username + (ME.user && ME.user.username === u.username ? " (bạn)" : "")));
+  var roleTd = el("td", "");
+  var sel = el("select", "");
+  ["viewer", "operator", "admin"].forEach(function (r) {
+    var o = el("option", "", ROLE_VN[r]); o.value = r; if (r === u.role) o.selected = true; sel.appendChild(o);
+  });
+  sel.addEventListener("change", function () {
+    userCall("/api/users/" + encodeURIComponent(u.username) + "/role", {role: sel.value}, "Đã đổi vai trò của " + u.username + ".");
+  });
+  roleTd.appendChild(sel); tr.appendChild(roleTd);
+  tr.appendChild(el("td", "", u.disabled ? "KHÓA" : "hoạt động"));
+  tr.appendChild(el("td", "", stamp(u.created_at)));
+  var act = el("td", "");
+  function mini(label, fn) { var b = el("button", "btn", label); b.addEventListener("click", fn); act.appendChild(b); act.appendChild(document.createTextNode(" ")); }
+  mini("Đổi tên", function () { inlineForm(tr, "Tên mới", "text", function (v) {
+    return userCall("/api/users/" + encodeURIComponent(u.username) + "/rename", {new_name: v}, u.username + " đã đổi tên thành " + v.trim().toLowerCase() + "."); }); });
+  mini("Mật khẩu", function () { inlineForm(tr, "Mật khẩu mới", "password", function (v) {
+    return userCall("/api/users/" + encodeURIComponent(u.username) + "/password", {password: v}, "Đã đổi mật khẩu của " + u.username + ". Mọi phiên đăng nhập của tài khoản này đã bị kết thúc."); }); });
+  mini(u.disabled ? "Mở khóa" : "Khóa", function () {
+    userCall("/api/users/" + encodeURIComponent(u.username) + (u.disabled ? "/enable" : "/disable"), {},
+             (u.disabled ? "Đã mở khóa " : "Đã khóa ") + u.username + "."); });
+  tr.appendChild(act);
+  return tr;
+}
+
+function inlineForm(afterRow, label, type, submit) {
+  var old = document.getElementById("us-inline");
+  if (old) old.parentNode.removeChild(old);
+  var tr = el("tr", ""); tr.id = "us-inline";
+  var td = el("td", ""); td.colSpan = 5;
+  var input = el("input", ""); input.type = type; input.placeholder = label; input.size = 20;
+  if (type === "password") input.autocomplete = "new-password";
+  var ok = el("button", "btn primary", "Lưu"), no = el("button", "btn", "Hủy");
+  td.appendChild(input); td.appendChild(document.createTextNode(" ")); td.appendChild(ok);
+  td.appendChild(document.createTextNode(" ")); td.appendChild(no);
+  tr.appendChild(td);
+  afterRow.parentNode.insertBefore(tr, afterRow.nextSibling);
+  input.focus();
+  no.addEventListener("click", function () { tr.parentNode.removeChild(tr); });
+  ok.addEventListener("click", function () { submit(input.value); });
+}
+
+function refreshUsers() {
+  return getJSON("/api/users").then(function (d) {
+    var t = $("us-list"); clear(t);
+    var head = el("tr", "");
+    ["Tên đăng nhập", "Vai trò", "Trạng thái", "Tạo lúc", ""].forEach(function (h) { head.appendChild(el("th", "", h)); });
+    t.appendChild(head);
+    d.items.forEach(function (u) { t.appendChild(userRow(u, t)); });
+  });
+}
+
+// ---- 33A: thanh công cụ trong tab Thao tác
+function initActionNav() {
+  var buttons = Array.prototype.slice.call(document.querySelectorAll("#act-subnav .subbtn"));
+  function choose(name) {
+    buttons.forEach(function (b) { b.setAttribute("aria-selected", b.getAttribute("data-sub") === name ? "true" : "false"); });
+    Array.prototype.forEach.call(document.querySelectorAll("#tab-actions .subpane"), function (p) {
+      p.hidden = (p.getAttribute("data-sub") !== name);
+    });
+    try { sessionStorage.setItem("actSub", name); } catch (e) { /* bị chặn thì thôi, chỉ không nhớ mục đã chọn */ }
+  }
+  buttons.forEach(function (b) { b.addEventListener("click", function () { choose(b.getAttribute("data-sub")); }); });
+  var saved = null;
+  try { saved = sessionStorage.getItem("actSub"); } catch (e) { saved = null; }
+  choose(buttons.some(function (b) { return b.getAttribute("data-sub") === saved; }) ? saved : "dept");
 }
 
 // ---- 32C: thêm phòng ban
@@ -1728,10 +2028,11 @@ function initCharts() {
 function noRefresh() { return Promise.resolve(); }   // tab Thao tác không tự làm mới (giữ nguyên chữ đang nhập)
 
 var TABS = {overview: refreshOverview, map: refreshMap, charts: refreshCharts, incidents: refreshIncidents, fixes: refreshFixes,
-            measure: refreshMeasure, audit: refreshAudit, actions: noRefresh};
+            measure: refreshMeasure, audit: refreshAudit, actions: noRefresh, users: refreshUsers, config: refreshConfig};
 
 function currentTab() {
   var name = (location.hash || "#overview").substr(1);
+  if (name === "users" && ME.role !== "admin") return "overview";        // trang Tài khoản chỉ dành cho quản trị
   return TABS[name] ? name : "overview";
 }
 
@@ -1772,6 +2073,12 @@ function initTheme() {
 }
 initTheme();
 initActions();
+initActionNav();
+initAuth();
+$("btn-cf-reload").addEventListener("click", function () { refreshConfig(); });
+Array.prototype.forEach.call(document.querySelectorAll("#cf-subnav .subbtn"), function (b) {
+  b.addEventListener("click", function () { cfChooseView(b.getAttribute("data-view")); });
+});
 initDepartment();
 initDepartmentList();
 initCharts();

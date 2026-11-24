@@ -16,20 +16,24 @@ import hmac
 import secrets
 import subprocess
 import threading
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from netauto import actions, db, department, deptexec, maintenance, webdata
+from netauto import actions, auth, configview, db, department, deptexec, maintenance, webauth, webdata
+from netauto import intent as intent_mod
 from netauto.intent import INTENT_PATH
 
 INDEX = Path(__file__).resolve().parent / "static" / "index.html"
+LOGIN = Path(__file__).resolve().parent / "static" / "login.html"
 TOKEN_PLACEHOLDER = "__NETAUTO_TOKEN__"
 LOCAL_HOSTNAMES = ("127.0.0.1", "localhost", "::1")
 OUTPUT_TAIL = 8000          # chỉ trả phần cuối của đầu ra dài
+CONFIG_CACHE_S = 3
 
 
 class PlanBody(BaseModel):
@@ -59,13 +63,53 @@ class RemoveBody(BaseModel):
     confirm: bool = False
 
 
+class LoginBody(BaseModel):
+    username: str = ""
+    password: str = ""
+
+
+class UserBody(BaseModel):
+    username: str = ""
+    password: str = ""
+    role: str = ""
+
+
+class RoleBody(BaseModel):
+    role: str = ""
+
+
+class RenameBody(BaseModel):
+    new_name: str = ""
+
+
+class PasswordBody(BaseModel):
+    password: str = ""
+
+
 class CloseBody(BaseModel):
     id: int | None = None
 
 
 def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=actions,
-               dept=deptexec, intent_path: str = INTENT_PATH, lab_path: str = deptexec.LAB_PATH) -> FastAPI:
-    app = FastAPI(title="netauto", description="API của hệ thống Network Automation")
+               dept=deptexec, intent_path: str = INTENT_PATH, lab_path: str = deptexec.LAB_PATH,
+               auth_enabled: bool = False, view=configview) -> FastAPI:
+    """auth_enabled=True: mọi yêu cầu (trừ trang đăng nhập) cần phiên đăng nhập và đủ vai trò (33B)."""
+    def authz(request: Request):
+        request.state.user = None
+        if not auth_enabled:
+            return
+        conn = auth.connect(db_path)
+        try:
+            res = webauth.authorize(conn, request.cookies.get(webauth.COOKIE), request.method,
+                                    request.url.path, maintenance.now())
+        finally:
+            conn.close()
+        request.state.user = res["user"]
+        if not res["ok"]:
+            raise HTTPException(res["status"], res["detail"])
+
+    app = FastAPI(title="netauto", description="API của hệ thống Network Automation",
+                  dependencies=[Depends(authz)])
     token = token or secrets.token_urlsafe(16)
     apply_gate = threading.Lock()                 # tối đa một lần áp dụng từ web cùng lúc
 
@@ -78,13 +122,30 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
         finally:
             conn.close()
 
-    def guard(request: Request):
+    def check_host(request: Request):
         hostname = urlsplit("//" + request.headers.get("host", "")).hostname
         if hostname not in LOCAL_HOSTNAMES:
             raise HTTPException(403, "Thao tác ghi chỉ được phép từ chính máy chạy hệ thống.")
+
+    def guard(request: Request):
+        check_host(request)
         sent = request.headers.get("x-netauto-token", "")
         if not hmac.compare_digest(sent.encode(), token.encode()):
             raise HTTPException(403, "Thiếu hoặc sai mã xác thực. Hãy tải lại trang.")
+
+    def acting(request: Request):
+        """Ghi nhớ người đang thao tác (cho nhật ký kiểm toán và cửa sổ bảo trì) trong ngữ cảnh của yêu cầu này."""
+        user = getattr(request.state, "user", None)
+        if user:
+            actions.current_actor.set(f"web:{user['username']}")
+        return user
+
+    def noted(request: Request, result: str, detail: dict):
+        acting(request)
+        try:
+            actions.record_audit(db_path, result, maintenance.ALL, detail)
+        except Exception:
+            pass
 
     def checked_node(node):
         try:
@@ -97,8 +158,14 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
                 "output": text[-OUTPUT_TAIL:]}
 
     # ------------------------------------------------------------ trang và đọc dữ liệu
+    @app.get("/login", include_in_schema=False)
+    def login_page():
+        return HTMLResponse(LOGIN.read_text(encoding="utf-8"))
+
     @app.get("/", include_in_schema=False)
-    def index():
+    def index(request: Request):
+        if auth_enabled and request.state.user is None:
+            return HTMLResponse(LOGIN.read_text(encoding="utf-8"))
         html = INDEX.read_text(encoding="utf-8").replace(TOKEN_PLACEHOLDER, token)
         return HTMLResponse(html)
 
@@ -155,7 +222,8 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
 
     # ------------------------------------------------------------ thao tác ghi (28B)
     @app.post("/api/plan", dependencies=[Depends(guard)])
-    def plan(body: PlanBody):
+    def plan(body: PlanBody, request: Request):
+        acting(request)
         node = checked_node(body.node)
         try:
             code, text = runner.run_plan(node, db_path)
@@ -164,7 +232,8 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
         return shown("plan", code, text)
 
     @app.post("/api/apply", dependencies=[Depends(guard)])
-    def apply(body: ApplyBody):
+    def apply(body: ApplyBody, request: Request):
+        acting(request)
         if not body.confirm:
             raise HTTPException(400, "Áp dụng thật phải gửi confirm=true.")
         node = checked_node(body.node)
@@ -185,7 +254,8 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
         return shown("apply", code, text)
 
     @app.post("/api/maintenance/open", dependencies=[Depends(guard)])
-    def maintenance_open(body: OpenBody):
+    def maintenance_open(body: OpenBody, request: Request):
+        acting(request)
         try:
             wid = query(actions.open_maintenance, body.nodes, body.reason, body.ttl_s,
                         webdata.node_names(), db_path)
@@ -194,7 +264,8 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
         return {"window": wid}
 
     @app.post("/api/maintenance/close", dependencies=[Depends(guard)])
-    def maintenance_close(body: CloseBody):
+    def maintenance_close(body: CloseBody, request: Request):
+        acting(request)
         return {"closed": query(actions.close_maintenance, body.id, db_path)}
 
     # ------------------------------------------------------------ thêm phòng ban (32B)
@@ -218,7 +289,8 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
                              for s in plan["steps"]]}
 
     @app.post("/api/department", dependencies=[Depends(guard)])
-    def department_create(body: DepartmentBody):
+    def department_create(body: DepartmentBody, request: Request):
+        acting(request)
         if not body.confirm:
             raise HTTPException(400, "Tạo phòng ban thật phải gửi confirm=true.")
         if not apply_gate.acquire(blocking=False):
@@ -262,7 +334,8 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
                 "commands": [" ".join(c) for c in plan["steps"]]}
 
     @app.post("/api/department/remove", dependencies=[Depends(guard)])
-    def department_remove(body: RemoveBody):
+    def department_remove(body: RemoveBody, request: Request):
+        acting(request)
         if not body.confirm:
             raise HTTPException(400, "Xóa phòng ban thật phải gửi confirm=true.")
         if not apply_gate.acquire(blocking=False):
@@ -285,6 +358,114 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
         finally:
             apply_gate.release()
 
+    # ------------------------------------------------------------ xem cấu hình thiết bị (33D, chỉ đọc)
+    config_cache: dict = {}
+    config_lock = threading.Lock()
+
+    @app.get("/api/config/{node}")
+    def config_of(node: str):
+        try:
+            intent = intent_mod.load_intent(intent_path)
+        except Exception as exc:
+            raise HTTPException(500, f"Không đọc được intent: {exc}") from None
+        if configview.role_of(node, intent) is None:
+            raise HTTPException(404, f"Không có thiết bị '{node}'.")
+        with config_lock:                              # tránh dồn dập lệnh vào thiết bị: dùng lại kết quả trong 3 giây
+            hit = config_cache.get(node)
+            if hit and time.monotonic() - hit[0] < CONFIG_CACHE_S:
+                return hit[1]
+            result = view.build_view(node, intent)
+            config_cache[node] = (time.monotonic(), result)
+            return result
+
+    # ------------------------------------------------------------ đăng nhập và tài khoản (33B)
+    @app.get("/api/login-info")
+    def login_info():
+        conn = auth.connect(db_path)
+        try:
+            return {"auth": auth_enabled, "has_users": auth.count_users(conn) > 0}
+        finally:
+            conn.close()
+
+    @app.post("/api/login", dependencies=[Depends(check_host)])
+    def login(body: LoginBody, response: Response):
+        if not auth_enabled:
+            raise HTTPException(400, "Đăng nhập đang tắt (máy chủ chạy với --no-auth).")
+        conn = auth.connect(db_path)
+        try:
+            res = webauth.login_attempt(conn, db_path, body.username, body.password, maintenance.now())
+        finally:
+            conn.close()
+        if res["status"] != 200:
+            raise HTTPException(res["status"], res["detail"])
+        response.set_cookie(webauth.COOKIE, res["token"], max_age=auth.SESSION_HOURS * 3600,
+                            httponly=True, samesite="strict", path="/")
+        return {"user": res["user"]}
+
+    @app.post("/api/logout", dependencies=[Depends(guard)])
+    def logout(request: Request, response: Response):
+        conn = auth.connect(db_path)
+        try:
+            auth.end_session(conn, request.cookies.get(webauth.COOKIE))
+        finally:
+            conn.close()
+        response.delete_cookie(webauth.COOKIE, path="/")
+        return {"ok": True}
+
+    @app.get("/api/me")
+    def me(request: Request):
+        user = getattr(request.state, "user", None)
+        if not auth_enabled:
+            return {"auth": False, "user": None, "role": "admin", "role_name": auth.ROLE_NAME["admin"]}
+        return {"auth": True, "user": user, "role": user["role"], "role_name": auth.ROLE_NAME[user["role"]]}
+
+    def with_users(fn, request: Request, result: str, detail: dict):
+        conn = auth.connect(db_path)
+        try:
+            fn(conn)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        finally:
+            conn.close()
+        noted(request, result, detail)
+        return {"ok": True}
+
+    @app.get("/api/users")
+    def users_list():
+        conn = auth.connect(db_path)
+        try:
+            return {"items": auth.list_users(conn)}
+        finally:
+            conn.close()
+
+    @app.post("/api/users", dependencies=[Depends(guard)])
+    def users_create(body: UserBody, request: Request):
+        return with_users(lambda c: auth.create_user(c, body.username, body.password, body.role, maintenance.now()),
+                          request, "TÀI KHOẢN TẠO", {"user": body.username.strip().lower(), "role": body.role})
+
+    @app.post("/api/users/{name}/role", dependencies=[Depends(guard)])
+    def users_role(name: str, body: RoleBody, request: Request):
+        return with_users(lambda c: auth.set_role(c, name, body.role), request, "TÀI KHOẢN ĐỔI QUYỀN",
+                          {"user": name, "role": body.role})
+
+    @app.post("/api/users/{name}/rename", dependencies=[Depends(guard)])
+    def users_rename(name: str, body: RenameBody, request: Request):
+        return with_users(lambda c: auth.rename_user(c, name, body.new_name), request, "TÀI KHOẢN ĐỔI TÊN",
+                          {"user": name, "new_name": body.new_name.strip().lower()})
+
+    @app.post("/api/users/{name}/disable", dependencies=[Depends(guard)])
+    def users_disable(name: str, request: Request):
+        return with_users(lambda c: auth.set_disabled(c, name, True), request, "TÀI KHOẢN KHÓA", {"user": name})
+
+    @app.post("/api/users/{name}/enable", dependencies=[Depends(guard)])
+    def users_enable(name: str, request: Request):
+        return with_users(lambda c: auth.set_disabled(c, name, False), request, "TÀI KHOẢN MỞ KHÓA", {"user": name})
+
+    @app.post("/api/users/{name}/password", dependencies=[Depends(guard)])
+    def users_password(name: str, body: PasswordBody, request: Request):
+        return with_users(lambda c: auth.set_password(c, name, body.password), request, "TÀI KHOẢN ĐỔI MẬT KHẨU",
+                          {"user": name})
+
     return app
 
 
@@ -295,9 +476,21 @@ def main(argv=None) -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--db", default=db.DB_PATH)
+    ap.add_argument("--no-auth", action="store_true",
+                    help="TẮT đăng nhập (chỉ để thử trên máy riêng; ai mở được trang đều thao tác được)")
     args = ap.parse_args(argv)
     os.environ.setdefault("NETAUTO_ACTOR", actions.ACTOR)
-    uvicorn.run(create_app(args.db), host=args.host, port=args.port)
+    if args.no_auth:
+        print("!! Đăng nhập đang TẮT (--no-auth): mọi người mở được trang đều có toàn quyền.")
+    else:
+        conn = auth.connect(args.db)
+        try:
+            if auth.count_users(conn) == 0:
+                print("!! Chưa có tài khoản nào, chưa ai đăng nhập được. Tạo tài khoản quản trị bằng:\n"
+                      "   python3 -m netauto.users add <tên> --role admin")
+        finally:
+            conn.close()
+    uvicorn.run(create_app(args.db, auth_enabled=not args.no_auth), host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

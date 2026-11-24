@@ -5,6 +5,7 @@ Nguyên tắc: web không có đường tắt. Mọi thay đổi đi qua đúng 
 kiểm chứng, hoàn tác và nhật ký kiểm toán; người thực hiện được ghi là "netauto-web".
 Lệnh chạy bằng danh sách tham số (không qua shell), và tên thiết bị được kiểm tra trước.
 """
+import contextvars
 import os
 import subprocess
 import sys
@@ -13,6 +14,8 @@ from netauto import audit, maintenance, remediation
 from netauto.intent import INTENT_PATH
 
 ACTOR = "netauto-web"
+# Người thực hiện của yêu cầu đang xử lý ("web:<tên>" khi đã đăng nhập). Mỗi yêu cầu chạy trong ngữ cảnh riêng.
+current_actor = contextvars.ContextVar("netauto_actor", default=ACTOR)
 PLAN_TIMEOUT_S = 90
 APPLY_TIMEOUT_S = 300
 REASON_MAX = 200
@@ -47,7 +50,7 @@ def check_node(node, known) -> str | None:
 
 
 def _run(args: list[str], timeout_s: float):
-    env = dict(os.environ, NETAUTO_ACTOR=ACTOR)
+    env = dict(os.environ, NETAUTO_ACTOR=current_actor.get())
     cp = subprocess.run([sys.executable, "-m", *args], capture_output=True, text=True,
                         timeout=timeout_s, env=env)
     return cp.returncode, cp.stdout + cp.stderr
@@ -78,6 +81,7 @@ def record_audit(db_path: str, result: str, nodes, detail: dict) -> int:
     try:
         entry = audit.new_entry(INTENT_PATH, None if nodes == maintenance.ALL else set(nodes),
                                 False, result, 0, 0.0, detail)
+        entry["actor"] = current_actor.get()
         return audit.record(c, entry)
     finally:
         c.close()
@@ -96,7 +100,7 @@ def open_maintenance(conn, nodes_text: str, reason: str, ttl_s: int, known, db_p
         nodes = maintenance.ALL
     else:
         nodes = {check_node(n.strip(), known) for n in nodes_text.split(",") if n.strip()}
-    wid = maintenance.open_window(conn, ACTOR, reason, nodes, int(ttl_s))
+    wid = maintenance.open_window(conn, current_actor.get(), reason, nodes, int(ttl_s))
     try:
         record(db_path, "BẢO TRÌ MỞ", nodes, {"window": wid, "reason": reason, "ttl": int(ttl_s)})
     except Exception:

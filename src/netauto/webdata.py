@@ -138,6 +138,8 @@ def audit_tone(result) -> str:
 
 def actor_kind(actor) -> str:
     """auto = máy tự sửa, web = thao tác từ giao diện web, manual = người gõ lệnh."""
+    if isinstance(actor, str) and actor.startswith("web:"):          # người đã đăng nhập web
+        return "web"
     return ACTOR_KIND.get(actor, "manual")
 
 
