@@ -112,6 +112,15 @@ class TestPerFaultIgnoresLimit(unittest.TestCase):
         self.assertEqual(len(d["items"]), 2)
         self.assertEqual(d["per_fault"][0]["runs"], 6)
 
+    def test_headline_summary_matches_the_cards(self):
+        conn = make_conn()
+        for k in range(6):
+            add(conn, alert=5, fix=25, start=k * 100)
+        d = webdata.injection_list(conn, limit=2)
+        self.assertEqual(d["summary"]["runs"], 6)
+        self.assertEqual(d["summary"]["runs"], sum(p["runs"] for p in d["per_fault"]))
+        self.assertEqual(d["summary"]["fixed"], 6)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -112,8 +112,8 @@ def _per_fault(rows: list) -> list:
 
 def injection_list(conn, limit=None) -> dict:
     rows = injections.list_injections(conn, clamp_limit(limit))
-    done = [r for r in rows if r["status"] != "running"]
     every = injections.list_injections(conn, MAX_MEASURE_RUNS)   # thống kê tính trên mọi lần đo, không theo limit
+    done = [r for r in every if r["status"] != "running"]       # ô tổng và các thẻ phải cùng phạm vi
     return {"items": rows, "summary": injections.summarize(done), "per_fault": _per_fault(every)}
 
 
