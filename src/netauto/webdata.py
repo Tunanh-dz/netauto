@@ -7,6 +7,7 @@ Mọi giá trị trả về đều chuyển được sang JSON.
 import json
 import re
 import sqlite3
+import statistics
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -78,10 +79,42 @@ def remediation_list(conn, limit=None, now: str | None = None) -> dict:
             "breaker_open": remediation.breaker_open(history, now)}
 
 
+MAX_MEASURE_RUNS = 2000
+
+
+def _per_fault(rows: list) -> list:
+    """Thống kê từng loại lỗi trên các lần đo đã có kết quả hợp lệ (detected/missed). rows: mới nhất trước."""
+    groups: dict = {}
+    for r in reversed(rows):                                   # cũ nhất trước: giữ thứ tự thời gian
+        if r["status"] in ("detected", "missed"):
+            groups.setdefault(r["fault"], []).append(r)
+    out = []
+    for name in sorted(groups):
+        runs = groups[name]
+        hit = [r for r in runs if r["status"] == "detected"]
+        alert = [round(r["seconds"], 1) for r in hit if r.get("seconds") is not None]
+        fixes = [round(r["fix_seconds"], 1) for r in hit if r.get("fix_seconds") is not None]
+        tried = [r for r in hit if r.get("mode") == "remediate"]
+        fixed = sum(1 for r in tried if r.get("fix_seconds") is not None)
+        fault = injections.FAULTS.get(name)
+        out.append({
+            "fault": name, "description": fault.desc if fault else "", "node": runs[-1]["node"],
+            "runs": len(runs), "detected": len(hit), "missed": len(runs) - len(hit),
+            "detect_pct": round(100.0 * len(hit) / len(runs), 1),
+            "alert_values": alert, "alert_median": statistics.median(alert) if alert else None,
+            "fix_values": fixes, "fix_median": statistics.median(fixes) if fixes else None,
+            "fix_min": min(fixes) if fixes else None, "fix_max": max(fixes) if fixes else None,
+            "fix_attempts": len(tried), "fixed": fixed,
+            "fix_pct": round(100.0 * fixed / len(tried), 1) if tried else None,
+        })
+    return out
+
+
 def injection_list(conn, limit=None) -> dict:
     rows = injections.list_injections(conn, clamp_limit(limit))
     done = [r for r in rows if r["status"] != "running"]
-    return {"items": rows, "summary": injections.summarize(done)}
+    every = injections.list_injections(conn, MAX_MEASURE_RUNS)   # thống kê tính trên mọi lần đo, không theo limit
+    return {"items": rows, "summary": injections.summarize(done), "per_fault": _per_fault(every)}
 
 
 def maintenance_list(conn, limit=None, now: str | None = None) -> dict:
@@ -94,17 +127,55 @@ AUDIT_COLS = ("id", "at", "actor", "result", "exit_code", "nodes", "prune", "dur
               "intent_sha", "hash")
 
 
+RESULT_TONE = {"THÀNH CÔNG": "ok", "CHƯA HỘI TỤ": "warn", "HOÀN TÁC": "warn", "TỪ CHỐI": "warn", "LỖI": "bad"}
+ACTOR_KIND = {"netauto-remediation": "auto", "netauto-web": "web"}
+
+
+def audit_tone(result) -> str:
+    """Màu theo kết quả: ok / warn / bad; kết quả khác (mở-đóng bảo trì, giá trị mới) là 'idle' (trung tính)."""
+    return RESULT_TONE.get(result, "idle")
+
+
+def actor_kind(actor) -> str:
+    """auto = máy tự sửa, web = thao tác từ giao diện web, manual = người gõ lệnh."""
+    return ACTOR_KIND.get(actor, "manual")
+
+
+def _audit_item(r) -> dict:
+    try:
+        detail = json.loads(r["detail"])
+    except (TypeError, ValueError):
+        detail = {}
+    if not isinstance(detail, dict):
+        detail = {}
+    steps = [x for x in detail.get("steps", []) if isinstance(x, dict)]
+    count = lambda status: sum(1 for x in steps if x.get("status") == status)
+    undo = detail.get("undo")
+    return {**{k: r[k] for k in AUDIT_COLS}, "hash": r["hash"][:12],
+            "tone": audit_tone(r["result"]), "actor_kind": actor_kind(r["actor"]),
+            "steps": {"done": count("XONG"), "exists": count("ĐÃ CÓ"), "failed": count("LỖI"), "total": len(steps)},
+            "flows_before": detail.get("flows_before"), "flows_after": detail.get("flows_after"),
+            "undo_count": len(undo) if isinstance(undo, list) else 0}
+
+
 def audit_list(conn, limit=None) -> dict:
-    """Nhật ký kiểm toán (mới nhất trước) kèm kết quả kiểm tra chuỗi băm toàn bộ."""
+    """Nhật ký kiểm toán (mới nhất trước), kết quả kiểm tra chuỗi băm toàn bộ và thống kê trên MỌI bản ghi."""
     old, conn.row_factory = conn.row_factory, sqlite3.Row    # audit.verify đọc cột theo tên
     try:
         ok, bad_id, reason = audit.verify(conn)
         rows = conn.execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?",
                             (clamp_limit(limit),)).fetchall()
-        items = [{**{k: r[k] for k in AUDIT_COLS}, "hash": r["hash"][:12]} for r in rows]
+        items = [_audit_item(r) for r in rows]
+        by_result: dict = {}
+        by_kind: dict = {}
+        for result, actor in conn.execute("SELECT result, actor FROM audit"):
+            by_result[result] = by_result.get(result, 0) + 1
+            kind = actor_kind(actor)
+            by_kind[kind] = by_kind.get(kind, 0) + 1
     finally:
         conn.row_factory = old
-    return {"items": items, "chain": {"ok": ok, "bad_id": bad_id, "reason": reason}}
+    return {"items": items, "chain": {"ok": ok, "bad_id": bad_id, "reason": reason},
+            "summary": {"total": sum(by_result.values()), "by_result": by_result, "by_actor_kind": by_kind}}
 
 
 def audit_detail(conn, entry_id: int):
@@ -380,18 +451,21 @@ def incident_events(conn, limit=None, only_open: bool = False, now: str | None =
         summary = _event_summary(conn, now)
     finally:
         conn.row_factory = old
-    return {"events": out, "summary": summary}
+    return {"events": out, "summary": summary,
+            "nodes": node_names(intent_path)}     # đủ mọi thiết bị để ô lọc không bị thiếu
 
 
 def _event(root, symptoms, fix_row, intent_vlans) -> dict:
     closed = root["closed_at"]
     duration = _seconds_between(root["opened_at"], closed) if closed else None
+    is_open = closed is None or any(x["closed_at"] is None for x in symptoms)
     return {
         "id": root["id"], "node": root["node"], "severity": root["severity"], "kind": root["kind"],
         "check_code": root["check_code"], "category": category_of(root["check_code"]),
         "message": root["message"], "opened_at": root["opened_at"], "closed_at": closed,
         "close_reason": root["close_reason"], "duration_s": duration,
-        "open": closed is None or any(s["closed_at"] is None for s in symptoms),
+        "open": is_open,
+        "resolved_by": None if is_open else ("auto_fix" if fix_row is not None and fix_row["outcome"] == "fixed" else "other"),
         "spans_gap": bool(root["spans_gap"]),
         "impact": _impact(root["scope"], intent_vlans),
         "fix": _fix_of(fix_row),

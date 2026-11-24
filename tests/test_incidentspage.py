@@ -35,6 +35,22 @@ class TestIncidentsTab(unittest.TestCase):
         self.assertIn("triệu chứng", self.html)
         self.assertIn("aria-expanded", self.html)
 
+    def test_red_and_yellow_only_for_open_events(self):
+        self.assertIn("ev-closed", self.html)
+        self.assertIn("Tự hết / thủ công", self.html)
+        self.assertIn("e.open", self.html)
+
+    def test_filters_are_dropdowns(self):
+        start = self.html.index("function selectFilter")
+        body = self.html[start:start + 900]
+        self.assertIn('el("select"', body)
+        self.assertIn("aria-label", body)
+        self.assertNotIn("function chipRow", self.html)
+
+    def test_dropdowns_list_every_choice_not_only_what_is_on_screen(self):
+        self.assertIn("d.nodes", self.html)
+        self.assertIn("Object.keys(CATEGORY_NAME)", self.html)
+
     def test_colour_legend(self):
         self.assertIn("Quy ước màu", self.html)
 

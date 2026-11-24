@@ -89,6 +89,12 @@ class TestGrouping(unittest.TestCase):
         json.dumps(events(conn))
 
 
+class TestFilterChoices(unittest.TestCase):
+    def test_lists_every_device_of_the_intent_even_without_incidents(self):
+        d = events(make_conn())
+        self.assertEqual(d["nodes"], sorted(["r1", "r2", "sw1", "sw2", "h-sales", "h-eng", "h-guest", "h-mgmt"]))
+
+
 class TestOpenAndDuration(unittest.TestCase):
     def test_open_event_has_no_end_or_duration(self):
         conn = make_conn()
@@ -176,6 +182,30 @@ class TestFix(unittest.TestCase):
         add_fix(conn, root, 99, 5, outcome="failed")
         add_fix(conn, root, 90, 8, outcome="fixed")
         self.assertEqual(events(conn)["events"][0]["fix"]["outcome"], "fixed")
+
+
+class TestResolvedBy(unittest.TestCase):
+    def test_open_event_has_no_resolver(self):
+        conn = make_conn()
+        add_incident(conn, 100, None)
+        self.assertIsNone(events(conn)["events"][0]["resolved_by"])
+
+    def test_closed_after_successful_fix_is_auto_fix(self):
+        conn = make_conn()
+        root = add_incident(conn, 100, 80)
+        add_fix(conn, root, 95, 8, outcome="fixed")
+        self.assertEqual(events(conn)["events"][0]["resolved_by"], "auto_fix")
+
+    def test_closed_without_fix_is_other(self):
+        conn = make_conn()
+        add_incident(conn, 100, 80)
+        self.assertEqual(events(conn)["events"][0]["resolved_by"], "other")
+
+    def test_closed_after_failed_fix_is_other(self):
+        conn = make_conn()
+        root = add_incident(conn, 100, 80)
+        add_fix(conn, root, 95, 8, outcome="failed")
+        self.assertEqual(events(conn)["events"][0]["resolved_by"], "other")
 
 
 class TestSummary(unittest.TestCase):
