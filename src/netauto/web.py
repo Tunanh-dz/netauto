@@ -108,6 +108,10 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
     def incident_list(limit: int | None = None, only_open: bool = False):
         return query(webdata.incident_list, limit, only_open)
 
+    @app.get("/api/events")
+    def incident_events(limit: int | None = None, only_open: bool = False):
+        return query(webdata.incident_events, limit, only_open)
+
     @app.get("/api/health")
     def health_history(limit: int | None = None):
         return query(webdata.health_history, limit)

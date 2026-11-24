@@ -314,3 +314,119 @@ def history(conn, range_key=None, now: str | None = None) -> dict:
         "fix_attempts": attempts}
     return {"range": key, "from": t0, "to": now, "health": health_pts, "incidents": inc,
             "buckets": buckets, "flows": flows, "fix_outcomes": outcomes, "summary": summary}
+
+
+# ---------------------------------------------------------------- 31A: sự kiện (gốc + triệu chứng)
+CATEGORY = {
+    "router.subinterface": "interface", "host.interface": "interface",
+    "router.uplink": "link", "switch.trunk": "link",
+    "router.ospf": "routing", "router.route": "routing",
+    "switch.access": "vlan", "host.gateway": "vlan",
+    "perf.flow": "flow",
+    "device.reachable": "device", "device.unknown": "device",
+}
+EVENT_WINDOW_S = 24 * 3600
+
+
+def category_of(check_code) -> str:
+    """Nhóm lỗi để phân loại trên giao diện; mã kiểm tra lạ thì vào 'other' (không báo lỗi)."""
+    return CATEGORY.get(check_code, "other")
+
+
+def _seconds_between(a: str, b: str) -> float:
+    return round((datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds(), 1)
+
+
+def _fix_of(row) -> dict | None:
+    if row is None:
+        return None
+    started, finished = row["started_at"], row["finished_at"]
+    return {"outcome": row["outcome"], "started_at": started, "finished_at": finished,
+            "took_s": _seconds_between(started, finished) if finished else None,
+            "audit_id": row["audit_id"]}
+
+
+def _impact(scope_text, intent_vlans: set) -> dict:
+    vlans = sorted(int(x) for x in str(scope_text or "").split(",") if x.strip())
+    return {"vlans": vlans, "all": bool(vlans) and intent_vlans <= set(vlans)}
+
+
+def incident_events(conn, limit=None, only_open: bool = False, now: str | None = None,
+                    intent_path: str | None = None) -> dict:
+    """Mỗi sự kiện = một sự cố GỐC cùng các triệu chứng của nó, kèm nhóm lỗi, mức ảnh hưởng
+    (số VLAN bị ảnh hưởng, lấy từ scope) và kết quả tự sửa gần nhất. Chỉ đọc."""
+    now = now or datetime.now().astimezone().isoformat(timespec="seconds")
+    intent_vlans = {int(v) for v in intent_mod.load_intent(intent_path or intent_mod.INTENT_PATH)["vlans"]}
+    old = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        is_root = "(root_id IS NULL OR root_id = id)"
+        open_clause = ("(closed_at IS NULL OR EXISTS (SELECT 1 FROM incidents s WHERE s.root_id = incidents.id "
+                       "AND s.id != incidents.id AND s.closed_at IS NULL))")
+        where = is_root + (" AND " + open_clause if only_open else "")
+        roots = conn.execute(f"SELECT * FROM incidents WHERE {where} ORDER BY id DESC LIMIT ?",
+                             (clamp_limit(limit, 50, 300),)).fetchall()
+        ids = [r["id"] for r in roots]
+        marks = ",".join("?" * len(ids))
+        kids: dict = {i: [] for i in ids}
+        fixes: dict = {}
+        if ids:
+            for s in conn.execute(f"SELECT * FROM incidents WHERE root_id IN ({marks}) AND id != root_id "
+                                  "ORDER BY id", ids):
+                kids[s["root_id"]].append(s)
+            for f in conn.execute(f"SELECT * FROM remediations WHERE incident_id IN ({marks}) ORDER BY id", ids):
+                fixes[f["incident_id"]] = f            # dòng sau ghi đè dòng trước: lấy lần thử gần nhất
+        out = [_event(r, kids[r["id"]], fixes.get(r["id"]), intent_vlans) for r in roots]
+        summary = _event_summary(conn, now)
+    finally:
+        conn.row_factory = old
+    return {"events": out, "summary": summary}
+
+
+def _event(root, symptoms, fix_row, intent_vlans) -> dict:
+    closed = root["closed_at"]
+    duration = _seconds_between(root["opened_at"], closed) if closed else None
+    return {
+        "id": root["id"], "node": root["node"], "severity": root["severity"], "kind": root["kind"],
+        "check_code": root["check_code"], "category": category_of(root["check_code"]),
+        "message": root["message"], "opened_at": root["opened_at"], "closed_at": closed,
+        "close_reason": root["close_reason"], "duration_s": duration,
+        "open": closed is None or any(s["closed_at"] is None for s in symptoms),
+        "spans_gap": bool(root["spans_gap"]),
+        "impact": _impact(root["scope"], intent_vlans),
+        "fix": _fix_of(fix_row),
+        "symptoms": [{"id": s["id"], "node": s["node"], "severity": s["severity"],
+                      "check_code": s["check_code"], "category": category_of(s["check_code"]),
+                      "message": s["message"], "opened_at": s["opened_at"], "closed_at": s["closed_at"]}
+                     for s in symptoms],
+    }
+
+
+def _event_summary(conn, now: str) -> dict:
+    """Thống kê 24 giờ qua, tính trên MỌI sự kiện (không phụ thuộc giới hạn số thẻ đang hiển thị)."""
+    since = (datetime.fromisoformat(now) - timedelta(seconds=EVENT_WINDOW_S)).isoformat(timespec="seconds")
+    rows = [r for r in conn.execute("SELECT * FROM incidents WHERE (root_id IS NULL OR root_id = id)")
+            if r["opened_at"] >= since or r["closed_at"] is None]
+    recent = [r for r in rows if r["opened_at"] >= since]
+    open_rows = [r for r in rows if r["closed_at"] is None]
+    durations = [_seconds_between(r["opened_at"], r["closed_at"]) for r in recent if r["closed_at"]]
+    by_category: dict = {}
+    by_node: dict = {}
+    for r in recent:
+        c = category_of(r["check_code"])
+        by_category[c] = by_category.get(c, 0) + 1
+        by_node[r["node"]] = by_node.get(r["node"], 0) + 1
+    latest: dict = {}
+    for f in conn.execute("SELECT * FROM remediations ORDER BY id"):
+        latest[f["incident_id"]] = f
+    tried = [latest[r["id"]] for r in recent if r["id"] in latest and latest[r["id"]]["outcome"] in FIX_ATTEMPTS]
+    ok = sum(1 for f in tried if f["outcome"] == "fixed")
+    return {
+        "events_24h": len(recent), "open_events": len(open_rows),
+        "open_critical": sum(1 for r in open_rows if r["severity"] == "critical"),
+        "open_warning": sum(1 for r in open_rows if r["severity"] == "warning"),
+        "mttr_s": round(sum(durations) / len(durations), 1) if durations else None,
+        "fix_attempted": len(tried), "fix_ok": ok,
+        "fix_success_pct": round(100.0 * ok / len(tried), 1) if tried else None,
+        "by_category": by_category, "by_node": by_node,
+    }

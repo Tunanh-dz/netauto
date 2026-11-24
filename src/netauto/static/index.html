@@ -19,6 +19,40 @@
     --head: #0b1016; --head-ink: #e6ebf0; --head-muted: #98a6b5;
     --series: #3987e5; --surface: #1a2129;
   }
+  /* ---- 31A: tab Sự cố ---- */
+  .evkpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-bottom: 16px; }
+  .evkpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .evkpi .lab { color: var(--muted); font-size: 13px; }
+  .evkpi .val { font-size: 28px; font-weight: 700; line-height: 1.2; }
+  .evkpi .sub { color: var(--muted); font-size: 12px; }
+  .evcols { display: grid; gap: 16px; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); align-items: start; }
+  @media (max-width: 900px) { .evcols { grid-template-columns: 1fr; } }
+  .evfilters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
+  .chip { font: inherit; font-size: 13px; padding: 3px 12px; border-radius: 999px; cursor: pointer;
+          border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .evcard { background: var(--card); border: 1px solid var(--line); border-left: 6px solid var(--c, var(--idle));
+            border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; }
+  .evcard.ev-crit { --c: var(--st-critical); } .evcard.ev-warn { --c: var(--st-warning); } .evcard.ev-fixed { --c: var(--ok); }
+  .evtags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 4px; }
+  .tag { font-size: 12px; padding: 1px 9px; border-radius: 999px; background: var(--idle-bg); color: var(--ink); }
+  .tag.sev { font-weight: 700; border: 1px solid var(--c); }
+  .tag.fix { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+  .tag.fixbad { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
+  .evtitle { font-weight: 600; word-break: break-word; }
+  .evmeta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .evtoggle { font: inherit; font-size: 13px; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; margin-top: 4px; }
+  .evsym { margin: 8px 0 0; padding: 6px 0 0; border-top: 1px dashed var(--line); list-style: none; }
+  .evsym li { font-size: 13px; padding: 2px 0; }
+  .evside { margin-bottom: 12px; padding-bottom: 8px; }
+  .evside .row { display: grid; grid-template-columns: 90px 1fr 28px; gap: 8px; align-items: center; padding: 3px 14px; font-size: 13px; }
+  .evside .row .bar { height: 10px; }
+  .evside .row .bar i { background: var(--series); }  /* số đếm không phải trạng thái: dùng màu chuỗi dữ liệu, không dùng xanh/đỏ */
+  .evlegend { list-style: none; margin: 0; padding: 4px 14px; font-size: 13px; }
+  .evlegend li { padding: 3px 0; display: flex; gap: 8px; align-items: flex-start; }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; flex: none; margin-top: 4px; background: var(--c, var(--idle)); }
+  .sw.ev-crit { --c: var(--st-critical); } .sw.ev-warn { --c: var(--st-warning); } .sw.ev-fixed { --c: var(--ok); }
+  .evnote { padding: 0 14px 6px; font-size: 12px; }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }   /* thuộc tính hidden phải thắng mọi display khác */
   body { margin: 0; background: var(--bg); color: var(--ink);
@@ -308,11 +342,25 @@
   </div>
 
   <div id="tab-incidents" class="panel" hidden>
-    <div class="toolbar">
-      <label><input type="checkbox" id="only-open"> Chỉ sự cố đang mở</label>
-      <span class="muted">Hiển thị tối đa 200 sự cố gần nhất. Sự cố có "gốc" là triệu chứng của một sự cố ở tầng thấp hơn.</span>
+    <div id="ev-kpis" class="evkpis"></div>
+    <div class="evcols">
+      <div>
+        <div class="evfilters" id="ev-filters"></div>
+        <div id="ev-list"></div>
+      </div>
+      <aside>
+        <div class="widget evside"><div class="whead">Theo nhóm lỗi (24 giờ qua)</div><div id="ev-by-category"></div></div>
+        <div class="widget evside"><div class="whead">Theo thiết bị (24 giờ qua)</div><div id="ev-by-node"></div></div>
+        <div class="widget evside"><div class="whead">Quy ước màu</div>
+          <ul class="evlegend">
+            <li><i class="sw ev-crit"></i>Nghiêm trọng: mất kết nối hoặc cấu hình sai làm mạng ngừng chạy</li>
+            <li><i class="sw ev-warn"></i>Cảnh báo: suy giảm, mạng còn chạy</li>
+            <li><i class="sw ev-fixed"></i>Đã được tự sửa thành công</li>
+          </ul>
+          <div class="muted evnote">Mỗi thẻ là một sự cố gốc; các sự cố do nó gây ra gộp vào "triệu chứng".</div>
+        </div>
+      </aside>
     </div>
-    <div class="tablewrap" id="inc-all"></div>
   </div>
 
   <div id="tab-fixes" class="panel" hidden>
@@ -669,22 +717,117 @@ function num(v, digits) { return v === null || v === undefined ? "-" : Number(v)
 var CLOSE_REASON = {resolved: "đã hết", escalated: "nâng mức", deescalated: "hạ mức",
                     replaced: "thay thế", cleared_during_gap: "hết trong khoảng trống"};
 
+var CATEGORY_NAME = {interface: "Giao diện", link: "Liên kết", routing: "Định tuyến", vlan: "VLAN",
+                     flow: "Luồng", device: "Thiết bị", host: "Máy trạm", other: "Khác"};
+var evState = {data: null, sev: "all", cat: "all", node: "all", open: false, expanded: {}};
+
+function impactText(imp) {
+  if (!imp || !imp.vlans.length) return "Ảnh hưởng: chưa xác định";
+  if (imp.all) return "Ảnh hưởng: mọi VLAN";
+  return "Ảnh hưởng: " + imp.vlans.length + " VLAN (" + imp.vlans.join(", ") + ")";
+}
+function evClass(e) {
+  if (e.fix && e.fix.outcome === "fixed" && !e.open) return "ev-fixed";
+  return e.severity === "critical" ? "ev-crit" : "ev-warn";
+}
+function kpi(label, value, sub) {
+  var k = el("div", "evkpi");
+  k.appendChild(el("div", "lab", label)); k.appendChild(el("div", "val", value)); k.appendChild(el("div", "sub", sub));
+  return k;
+}
+function renderEventKpis(sm) {
+  var box = $("ev-kpis"); clear(box);
+  box.appendChild(kpi("Đang mở", sm.open_events, sm.open_critical + " nghiêm trọng, " + sm.open_warning + " cảnh báo"));
+  box.appendChild(kpi("Sự kiện 24 giờ qua", sm.events_24h, "mỗi sự kiện gồm sự cố gốc và triệu chứng"));
+  box.appendChild(kpi("Thời gian khắc phục TB", sm.mttr_s === null ? "-" : fmtAge(sm.mttr_s), "tính trên sự kiện đã đóng"));
+  box.appendChild(kpi("Tự sửa thành công", sm.fix_success_pct === null ? "-" : sm.fix_success_pct + "%",
+                      sm.fix_attempted ? sm.fix_ok + "/" + sm.fix_attempted + " lần thử" : "chưa có lần thử nào"));
+}
+function chipRow(box, label, key, values, names) {
+  box.appendChild(el("span", "muted", label));
+  ["all"].concat(values).forEach(function (v) {
+    var b = el("button", "chip", v === "all" ? "Tất cả" : (names && names[v]) || v);
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(evState[key] === v));
+    b.addEventListener("click", function () { evState[key] = v; renderEvents(); });
+    box.appendChild(b);
+  });
+}
+function sideBars(box, counts, names) {
+  clear(box);
+  var keys = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a]; });
+  if (!keys.length) { box.appendChild(el("div", "muted evnote", "Chưa có dữ liệu.")); return; }
+  var max = counts[keys[0]];
+  keys.forEach(function (k) {
+    var row = el("div", "row"), bar = el("div", "bar"), fill = el("i");
+    fill.style.width = Math.round(100 * counts[k] / max) + "%";
+    bar.appendChild(fill);
+    row.appendChild(el("span", "", (names && names[k]) || k)); row.appendChild(bar); row.appendChild(el("span", "", counts[k]));
+    box.appendChild(row);
+  });
+}
+function eventCard(e) {
+  var card = el("div", "evcard " + evClass(e));
+  var tags = el("div", "evtags");
+  tags.appendChild(el("span", "tag sev", e.severity === "critical" ? "Nghiêm trọng" : "Cảnh báo"));
+  tags.appendChild(el("span", "tag", CATEGORY_NAME[e.category] || e.category));
+  tags.appendChild(el("span", "tag", e.node));
+  tags.appendChild(el("span", "tag", "#" + e.id));
+  if (e.fix && e.fix.outcome === "fixed") tags.appendChild(el("span", "tag fix", "Tự sửa " + (e.fix.took_s === null ? "" : Math.round(e.fix.took_s) + " s")));
+  else if (e.fix && e.fix.outcome) tags.appendChild(el("span", "tag fixbad", "Tự sửa: " + e.fix.outcome));
+  card.appendChild(tags);
+  card.appendChild(el("div", "evtitle", e.message));
+  var dur = e.duration_s === null ? "đang mở" : "kéo dài " + fmtAge(e.duration_s);
+  card.appendChild(el("div", "evmeta", impactText(e.impact) + " · Mở lúc " + stamp(e.opened_at) + " · " + dur));
+  if (e.symptoms.length) {
+    var open = !!evState.expanded[e.id];
+    var t = el("button", "evtoggle", (open ? "▾ " : "▸ ") + e.symptoms.length + " triệu chứng");
+    t.type = "button"; t.setAttribute("aria-expanded", String(open));
+    t.addEventListener("click", function () { evState.expanded[e.id] = !open; renderEvents(); });
+    card.appendChild(t);
+    if (open) {
+      var ul = el("ul", "evsym");
+      e.symptoms.forEach(function (s) {
+        ul.appendChild(el("li", "", "#" + s.id + " · " + s.node + " · " + (CATEGORY_NAME[s.category] || s.category) + " · " + s.message
+                          + (s.closed_at ? " (đóng " + stamp(s.closed_at) + ")" : " (đang mở)")));
+      });
+      card.appendChild(ul);
+    }
+  }
+  return card;
+}
+function renderEvents() {
+  var d = evState.data; if (!d) return;
+  renderEventKpis(d.summary);
+  var box = $("ev-filters"); clear(box);
+  chipRow(box, "Mức:", "sev", ["critical", "warning"], {critical: "Nghiêm trọng", warning: "Cảnh báo"});
+  var cats = [], nodes = [];
+  d.events.forEach(function (e) {
+    if (cats.indexOf(e.category) < 0) cats.push(e.category);
+    if (nodes.indexOf(e.node) < 0) nodes.push(e.node);
+  });
+  box.appendChild(el("br"));
+  chipRow(box, "Nhóm:", "cat", cats, CATEGORY_NAME);
+  box.appendChild(el("br"));
+  chipRow(box, "Thiết bị:", "node", nodes.sort(), null);
+  box.appendChild(el("br"));
+  var ob = el("button", "chip", "Chỉ sự kiện đang mở");
+  ob.type = "button"; ob.setAttribute("aria-pressed", String(evState.open));
+  ob.addEventListener("click", function () { evState.open = !evState.open; refreshIncidents(); });
+  box.appendChild(ob);
+  var list = $("ev-list"); clear(list);
+  var shown = d.events.filter(function (e) {
+    return (evState.sev === "all" || e.severity === evState.sev) && (evState.cat === "all" || e.category === evState.cat)
+        && (evState.node === "all" || e.node === evState.node);
+  });
+  if (!shown.length) list.appendChild(el("div", "muted", "Không có sự kiện nào khớp bộ lọc."));
+  shown.forEach(function (e) { list.appendChild(eventCard(e)); });
+  sideBars($("ev-by-category"), d.summary.by_category, CATEGORY_NAME);
+  sideBars($("ev-by-node"), d.summary.by_node, null);
+}
 function refreshIncidents() {
-  var onlyOpen = $("only-open").checked;
-  return getJSON("/api/incidents?limit=200&only_open=" + onlyOpen).then(function (d) {
-    table($("inc-all"),
-      ["#", "Thiết bị", "Mức", "Loại", "Thông điệp", "Mở lúc", "Đóng lúc", "Thời lượng", "Lý do đóng", "Gốc"],
-      d.items.map(function (i) {
-        var dur = i.closed_at ? fmtAge(Math.max(0, secondsBetween(i.opened_at, i.closed_at))) : "đang mở";
-        var root = i.root_id && i.root_id !== i.id ? "triệu chứng của #" + i.root_id : "gốc";
-        return [{text: i.id}, {text: i.node},
-                {node: pill(i.severity, i.severity === "critical" ? "bad" : "warn")},
-                {text: i.kind}, {text: i.message, cls: "msg"}, {text: stamp(i.opened_at)},
-                {text: stamp(i.closed_at)}, {text: dur},
-                {text: i.closed_at ? (CLOSE_REASON[i.close_reason] || i.close_reason || "-") : "-"},
-                {text: root}];
-      }),
-      "Chưa có sự cố nào.");
+  return getJSON("/api/events?limit=100&only_open=" + evState.open).then(function (d) {
+    evState.data = d; renderEvents();
   });
 }
 
@@ -1213,7 +1356,6 @@ function refresh() {
 }
 
 window.addEventListener("hashchange", function () { showTab(); refresh(); });
-$("only-open").addEventListener("change", refresh);
 function applyTheme(t) {
   if (t === "dark") document.documentElement.setAttribute("data-theme", "dark");
   else document.documentElement.removeAttribute("data-theme");
