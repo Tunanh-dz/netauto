@@ -96,6 +96,19 @@
   svg.dotstrip text { fill: var(--muted); font: 11px system-ui, sans-serif; }
   .kpiring { display: flex; align-items: center; gap: 12px; }
   .kpiring svg.ring { width: 84px; margin: 0; flex: none; }
+  /* ---- 31D: diễn biến gần đây trên tổng quan ---- */
+  .recent { margin-top: 16px; }
+  .rrow { display: grid; grid-template-columns: 14px 110px 1fr auto; gap: 4px 12px; align-items: center;
+          padding: 8px 14px; border-top: 1px solid var(--line); font-size: 14px; }
+  .rrow:first-child { border-top: 0; }
+  .rrow .rdot { width: 12px; height: 12px; border-radius: 50%; background: var(--c, var(--idle)); }
+  .rrow.ev-crit { --c: var(--st-critical); } .rrow.ev-warn { --c: var(--st-warning); }
+  .rrow.ev-fixed { --c: var(--ok); } .rrow.ev-closed { --c: var(--idle); }
+  .rrow .rtime { color: var(--muted); font-size: 13px; }
+  .rrow .rmsg { word-break: break-word; }
+  .rrow .rend { font-weight: 600; font-size: 13px; white-space: nowrap; }
+  .rrow.ev-fixed .rend { color: var(--ok); } .rrow.ev-crit .rend { color: var(--bad); } .rrow.ev-warn .rend { color: var(--warn); }
+  @media (max-width: 700px) { .rrow { grid-template-columns: 14px 1fr; } .rrow .rend { grid-column: 2; } }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }   /* thuộc tính hidden phải thắng mọi display khác */
   body { margin: 0; background: var(--bg); color: var(--ink);
@@ -250,6 +263,7 @@
   .bar i { display: block; height: 100%; background: var(--ok); } .bar i.warn { background: var(--st-warning); } .bar i.bad { background: var(--st-critical); }
   svg.ring { width: 100%; max-width: 150px; height: auto; display: block; margin: 0 auto; }
   svg.ring .track { stroke: var(--line); }
+  svg.ring .lossarc { stroke: var(--st-critical); }
   svg.ring .val.ok { stroke: var(--ok); } svg.ring .val.warn { stroke: var(--st-warning); } svg.ring .val.bad { stroke: var(--st-critical); }
   svg.ring text.ringnum { fill: var(--ink); font: 700 24px system-ui, sans-serif; }
   .ringcard { text-align: center; }
@@ -312,6 +326,11 @@
       <svg id="ring-fix" class="ring" viewBox="0 0 120 120" role="img" aria-label="Tự sửa thành công"></svg>
       <div id="ring-fix-sub" class="muted">-</div>
     </div>
+  </div>
+
+  <div class="widget recent" id="widget-recent">
+    <div class="whead"><h2>Diễn biến gần đây</h2><span class="sub">Các sự kiện mới nhất: lỗi xảy ra lúc nào, kết thúc ra sao</span></div>
+    <div class="wbody" id="ov-recent"></div>
   </div>
 
   <div class="cols">
@@ -624,14 +643,22 @@ function renderFixes(items) {
 // ---- 30B: widget trên tổng quan. Chữ từ mạng chỉ vào DOM bằng textContent.
 var RING_C = 2 * Math.PI * 48;
 function ringTone(pct) { return pct >= 95 ? "ok" : (pct >= 80 ? "warn" : "bad"); }
+// Độ sẵn sàng khắt khe hơn: 98,8% nghĩa là mạng mất ~14 phút/ngày nên không được xanh như 100%.
+function uptimeTone(pct) { return pct >= 99.9 ? "ok" : (pct >= 98 ? "warn" : "bad"); }
 
-function ring(svg, pct, centerText, label) {
+function ring(svg, pct, centerText, label, toneFn) {
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   svg.appendChild(svgEl("circle", {cx: 60, cy: 60, r: 48, fill: "none", "stroke-width": 12, "class": "track"}));
   if (pct !== null && pct > 0) {
     var len = RING_C * Math.min(100, pct) / 100;
     svg.appendChild(svgEl("circle", {cx: 60, cy: 60, r: 48, fill: "none", "stroke-width": 12, "stroke-linecap": "round",
-      "stroke-dasharray": len.toFixed(1) + " " + RING_C.toFixed(1), transform: "rotate(-90 60 60)", "class": "val " + ringTone(pct)}));
+      "stroke-dasharray": len.toFixed(1) + " " + RING_C.toFixed(1), transform: "rotate(-90 60 60)", "class": "val " + (toneFn || ringTone)(pct)}));
+    if (pct < 100) {        // phần thiếu hiện thành cung đỏ riêng, để 98,8% khác hẳn 100%
+      var rest = RING_C - len;
+      svg.appendChild(svgEl("circle", {cx: 60, cy: 60, r: 48, fill: "none", "stroke-width": 12,
+        "stroke-dasharray": "0 " + len.toFixed(1) + " " + rest.toFixed(1) + " " + RING_C.toFixed(1),
+        transform: "rotate(-90 60 60)", "class": "lossarc"}));
+    }
   }
   svg.appendChild(svgEl("text", {x: 60, y: 68, "text-anchor": "middle", "class": "ringnum"}, centerText));
   svg.setAttribute("aria-label", label);
@@ -742,11 +769,29 @@ function renderWidgets(topo, hist) {
   var sum = hist && hist.summary;
   var av = sum ? sum.availability_pct : null, fx = sum ? sum.fix_success_pct : null;
   ring($("ring-uptime"), av, av === null ? "-" : av.toFixed(1) + "%",
-       av === null ? "Độ sẵn sàng: chưa có dữ liệu" : "Độ sẵn sàng 1 giờ qua: " + av.toFixed(1) + " phần trăm");
-  $("ring-uptime-sub").textContent = av === null ? "Chưa có dữ liệu" : "1 giờ qua · điểm khỏe từ 90 · " + sum.samples + " lần quét";
+       av === null ? "Độ sẵn sàng: chưa có dữ liệu" : "Độ sẵn sàng 1 giờ qua: " + av.toFixed(1) + " phần trăm", uptimeTone);
+  $("ring-uptime-sub").textContent = av === null ? "Chưa có dữ liệu" : "1 giờ qua · điểm sức khỏe từ 90 trở lên · " + sum.samples + " lần quét";
   ring($("ring-fix"), fx, fx === null ? "-" : fx.toFixed(0) + "%",
        fx === null ? "Tự sửa: chưa có lần nào" : "Tự sửa thành công: " + fx.toFixed(0) + " phần trăm");
   $("ring-fix-sub").textContent = fx === null ? "Chưa có lần tự sửa trong 1 giờ" : sum.fix_attempts + " lần tự sửa trong 1 giờ qua";
+}
+
+function recentEnd(e) {
+  if (e.open) return "đang mở";
+  var t = e.duration_s === null ? "" : " sau " + fmtAge(e.duration_s);
+  return e.resolved_by === "auto_fix" ? "Đã tự sửa" + t : "đã đóng (tự hết / thủ công)" + t;
+}
+function renderRecent(d) {
+  var box = $("ov-recent"); clear(box);
+  if (!d || !d.events.length) { box.appendChild(el("div", "muted", "Chưa có sự cố nào được ghi nhận. Mạng chạy đúng intent từ đầu.")); return; }
+  d.events.slice(0, 6).forEach(function (e) {
+    var row = el("div", "rrow " + evClass(e));
+    row.appendChild(el("i", "rdot"));
+    row.appendChild(el("span", "rtime", stamp(e.opened_at)));
+    row.appendChild(el("span", "rmsg", e.node + ": " + e.message + (e.symptoms.length ? " (+" + e.symptoms.length + " triệu chứng)" : "")));
+    row.appendChild(el("span", "rend", recentEnd(e)));
+    box.appendChild(row);
+  });
 }
 
 function refreshOverview() {
@@ -756,10 +801,12 @@ function refreshOverview() {
     getJSON("/api/health?limit=60"),
     getJSON("/api/remediations?limit=10"),
     getJSON("/api/topology").catch(function () { return null; }),
-    getJSON("/api/history?range=1h").catch(function () { return null; })
+    getJSON("/api/history?range=1h").catch(function () { return null; }),
+    getJSON("/api/events?limit=6").catch(function () { return null; })
   ]).then(function (r) {
     var status = r[0], inc = r[1], hist = r[2], fix = r[3];
     renderWidgets(r[4], r[5]);
+    renderRecent(r[6]);
     renderMonitor(status.monitor);
     renderHealth(status.health, hist.items);
     $("open").textContent = status.open_incidents;
