@@ -161,15 +161,33 @@
   .st-bad { --c: var(--bad); --cbg: var(--bad-bg); }
   svg.map { width: 100%; height: auto; display: block; background: var(--card);
             border: 1px solid var(--line); border-radius: 12px; }
-  .maplink { stroke: var(--c); stroke-width: 3; fill: none; }
-  .maplink.st-bad { stroke-dasharray: 7 5; }
+  .maplink { stroke: var(--c); stroke-width: 4; fill: none; stroke-linecap: round; }
+  .maplink.st-bad { stroke-dasharray: 7 6; }
+  .maplink.flowanim { stroke-width: 3; stroke-dasharray: 10 8; animation: mapflow 1.2s linear infinite; }
+  @keyframes mapflow { to { stroke-dashoffset: -18; } }
+  @media (prefers-reduced-motion: reduce) { .maplink.flowanim { animation: none; } }
   .mapnode { cursor: pointer; }
-  .mapnode rect { fill: var(--cbg); stroke: var(--c); stroke-width: 2; }
-  .mapnode.sel rect { stroke-width: 4; }
-  .mapnode text { fill: var(--ink); font: 600 13px system-ui, sans-serif; text-anchor: middle; }
+  .mapnode .base { fill: var(--cbg); stroke: var(--c); stroke-width: 3; }
+  .mapnode.sel .base { stroke-width: 6; }
+  .mapnode:focus-visible .base { stroke-width: 6; }
+  .mapnode .glyph { stroke: var(--ink); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .mapnode .glyph.fill { fill: var(--ink); stroke: none; }
+  .mapnode .badge { fill: var(--c); stroke: var(--card); stroke-width: 2; }
+  .mapnode text.sym { fill: #fff; font: 700 11px system-ui, sans-serif; stroke: none; }
+  .mapnode text { fill: var(--ink); font: 600 13px system-ui, sans-serif; text-anchor: middle;
+                  paint-order: stroke; stroke: var(--card); stroke-width: 5px; }  /* viền nền: đường nối không gạch ngang tên */
   .mapnode text.sub { font: 11px system-ui, sans-serif; fill: var(--muted); }
-  .maplabel { fill: var(--muted); font: 10px ui-monospace, Consolas, monospace; text-anchor: middle; }
+  .maplabel { fill: var(--muted); font: 10px ui-monospace, Consolas, monospace; text-anchor: middle;
+              paint-order: stroke; stroke: var(--card); stroke-width: 4px; }
+  .mapx { fill: var(--bad); font: 700 16px system-ui, sans-serif; text-anchor: middle; dominant-baseline: central;
+          paint-order: stroke; stroke: var(--card); stroke-width: 5px; }
+  .layerband { fill: var(--bg); opacity: .55; }
   .layerlabel { fill: var(--muted); font: 600 11px system-ui, sans-serif; text-transform: uppercase; }
+  .maplegend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: -4px 0 10px; font-size: 13px; color: var(--muted); align-items: center; }
+  .maplegend .it { display: inline-flex; gap: 6px; align-items: center; }
+  .maplegend .dotl { width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
+  .maplegend .dash { width: 26px; height: 0; border-top: 3px dashed var(--bad); }
+  .maplegend .solid { width: 26px; height: 0; border-top: 3px solid var(--ok); }
   /* 30A: biểu đồ. Màu trạng thái là bảng cố định (không đổi theo theme); chuỗi đơn dùng xanh dương. */
   :root[data-theme="dark"] svg.chart .band { opacity: .25; }
   .rangebar { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -329,12 +347,9 @@
 
   <div id="tab-map" class="panel" hidden>
     <div id="map-notice" class="notice" hidden></div>
-    <div class="toolbar">
-      <span class="pill ok">Bình thường</span><span class="pill warn">Cảnh báo</span>
-      <span class="pill bad">Lỗi (liên kết lỗi vẽ nét đứt)</span>
-      <span class="muted">Bấm vào một thiết bị để xem chi tiết. Sơ đồ tự làm mới mỗi 5 giây.</span>
-    </div>
-    <svg id="map" class="map" viewBox="0 0 760 420" role="img" aria-label="Sơ đồ mạng"></svg>
+    <div id="map-summary" class="evkpis"></div>
+    <div id="map-legend" class="maplegend"></div>
+    <svg id="map" class="map" viewBox="0 0 760 440" role="img" aria-label="Sơ đồ mạng"></svg>
     <div id="map-detail"></div>
     <section>
       <h2>Các luồng được đo</h2>
@@ -1154,9 +1169,10 @@ function initActions() {
 var SVGNS = "http://www.w3.org/2000/svg";
 var mapData = null;
 var mapSel = null;
-var LAYER_Y = {router: 70, switch: 205, host: 345};
+var LAYER_Y = {router: 80, switch: 225, host: 370};
 var LAYER_NAME = {router: "Router", switch: "Switch", host: "Máy trạm"};
-var NODE_W = 112, NODE_H = 46, MAP_W = 760;
+var NODE_R = 28, MAP_W = 760;
+var STATE_SYMBOL = {ok: "✓", warn: "!", bad: "✕"};
 var STATE_TEXT = {ok: "bình thường", warn: "cảnh báo", bad: "lỗi"};
 var FLOW_TEXT = {ok: "tốt", degraded: "chập chờn/chậm", down: "mất kết nối", unknown: "chưa có số đo"};
 
@@ -1192,32 +1208,77 @@ function layoutMap(d) {
   return byName;
 }
 
+// Biểu tượng theo loại thiết bị, vẽ bằng nét đơn giản ở giữa vòng tròn trạng thái.
+function nodeIcon(g, role, n) {
+  var x = n.x, y = n.y, add = function (tag, attrs, cls) { attrs["class"] = cls || "glyph"; g.appendChild(svgEl(tag, attrs)); };
+  if (role === "router") {                      // bốn mũi tên chia đường
+    add("path", {d: "M" + (x - 13) + " " + y + "H" + (x + 13) + "M" + x + " " + (y - 13) + "V" + (y + 13)});
+    add("path", {d: "M" + (x + 8) + " " + (y - 5) + "L" + (x + 13) + " " + y + "L" + (x + 8) + " " + (y + 5) +
+                    "M" + (x - 8) + " " + (y - 5) + "L" + (x - 13) + " " + y + "L" + (x - 8) + " " + (y + 5) +
+                    "M" + (x - 5) + " " + (y - 8) + "L" + x + " " + (y - 13) + "L" + (x + 5) + " " + (y - 8) +
+                    "M" + (x - 5) + " " + (y + 8) + "L" + x + " " + (y + 13) + "L" + (x + 5) + " " + (y + 8)});
+  } else if (role === "switch") {               // thân switch và hàng cổng
+    add("rect", {x: x - 15, y: y - 8, width: 30, height: 16, rx: 3});
+    for (var i = 0; i < 4; i++) add("rect", {x: x - 11 + i * 7, y: y - 2, width: 4, height: 6}, "glyph fill");
+  } else if (role === "host") {                 // màn hình và chân đế
+    add("rect", {x: x - 13, y: y - 11, width: 26, height: 17, rx: 2});
+    add("path", {d: "M" + (x - 6) + " " + (y + 12) + "H" + (x + 6) + "M" + x + " " + (y + 6) + "V" + (y + 12)});
+  }
+}
+
 function drawMap(d) {
   var svg = $("map");
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   var byName = layoutMap(d);
-  Object.keys(LAYER_Y).forEach(function (role) {
-    svg.appendChild(svgEl("text", {x: 8, y: LAYER_Y[role] - 36, "class": "layerlabel"}, LAYER_NAME[role]));
+  Object.keys(LAYER_Y).forEach(function (role, i) {
+    if (i % 2 === 0) svg.appendChild(svgEl("rect", {x: 0, y: LAYER_Y[role] - 62, width: MAP_W, height: 124, "class": "layerband"}));
+    svg.appendChild(svgEl("text", {x: 10, y: LAYER_Y[role] - 44, "class": "layerlabel"}, LAYER_NAME[role]));
   });
   d.links.forEach(function (l) {
     var a = byName[l.a], b = byName[l.b];
     var g = svgEl("g", {"class": "st-" + l.status});
-    g.appendChild(svgEl("line", {x1: a.x, y1: a.y, x2: b.x, y2: b.y, "class": "maplink st-" + l.status}));
-    var t = 0.2;     // nhãn cổng đặt gần mỗi đầu để không đè lên nhau
-    g.appendChild(svgEl("text", {x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t - 4, "class": "maplabel"}, l.a_port));
-    g.appendChild(svgEl("text", {x: b.x + (a.x - b.x) * t, y: b.y + (a.y - b.y) * t - 4, "class": "maplabel"}, l.b_port));
+    g.appendChild(svgEl("line", {x1: a.x, y1: a.y, x2: b.x, y2: b.y, "class": "maplink st-" + l.status + (l.status === "ok" ? " flowanim" : "")}));
+    // Nhãn cổng đặt cách thiết bị ~80px dọc theo liên kết: ra khỏi vòng tròn và dòng tên, không đè lên nhau.
+    var len = Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)), t = Math.min(0.45, 80 / len);
+    var vertical = Math.abs(b.x - a.x) < 20, dx = vertical ? 8 : 0, anchor = vertical ? "start" : "middle";   // liên kết dọc: nhãn lệch sang bên cho khỏi chồng lên nhau
+    g.appendChild(svgEl("text", {x: a.x + (b.x - a.x) * t + dx, y: a.y + (b.y - a.y) * t - 4, "class": "maplabel", "text-anchor": anchor}, l.a_port));
+    g.appendChild(svgEl("text", {x: b.x + (a.x - b.x) * t + dx, y: b.y + (a.y - b.y) * t + 12, "class": "maplabel", "text-anchor": anchor}, l.b_port));
+    if (l.status === "bad") g.appendChild(svgEl("text", {x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, "class": "mapx"}, "✕"));
     svg.appendChild(g);
   });
   d.nodes.forEach(function (n) {
-    var g = svgEl("g", {"class": "mapnode st-" + n.status + (n.name === mapSel ? " sel" : ""), tabindex: 0});
-    g.appendChild(svgEl("rect", {x: n.x - NODE_W / 2, y: n.y - NODE_H / 2, width: NODE_W, height: NODE_H, rx: 10}));
-    g.appendChild(svgEl("text", {x: n.x, y: n.y - 3}, n.name));
-    g.appendChild(svgEl("text", {x: n.x, y: n.y + 13, "class": "sub"}, STATE_TEXT[n.status] || n.status));
+    var g = svgEl("g", {"class": "mapnode st-" + n.status + (n.name === mapSel ? " sel" : ""), tabindex: 0, role: "button",
+                        "aria-label": n.name + ": " + (STATE_TEXT[n.status] || n.status)});
+    g.appendChild(svgEl("circle", {cx: n.x, cy: n.y, r: NODE_R, "class": "base"}));
+    nodeIcon(g, n.role, n);
+    g.appendChild(svgEl("circle", {cx: n.x + 21, cy: n.y - 21, r: 9, "class": "badge"}));
+    g.appendChild(svgEl("text", {x: n.x + 21, y: n.y - 17, "class": "sym"}, STATE_SYMBOL[n.status] || "?"));
+    // Trạng thái không bình thường viết cùng dòng với tên: không chiếm thêm dòng nên không đè lên nhãn cổng.
+    g.appendChild(svgEl("text", {x: n.x, y: n.y + NODE_R + 16}, n.name + (n.status !== "ok" ? " · " + (STATE_TEXT[n.status] || n.status) : "")));
     var pick = function () { mapSel = n.name; drawMap(mapData); showNodeDetail(n.name); };
     g.addEventListener("click", pick);
     g.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") pick(); });
     svg.appendChild(g);
   });
+}
+
+function renderMapSummary(d) {
+  var box = $("map-summary"); clear(box);
+  var ok = d.nodes.filter(function (n) { return n.status === "ok"; }).length;
+  var downLinks = d.links.filter(function (l) { return l.status === "bad"; }).length;
+  var flowsOk = d.flows.filter(function (f) { return f.state === "ok"; }).length;
+  var ids = {}; d.nodes.forEach(function (n) { n.incidents.forEach(function (i) { ids[i.id] = 1; }); });
+  box.appendChild(kpi("Thiết bị bình thường", ok + "/" + d.nodes.length, d.nodes.length - ok ? (d.nodes.length - ok) + " thiết bị có vấn đề" : "tất cả đều ổn"));
+  box.appendChild(kpi("Liên kết đứt", downLinks, d.links.length ? "trên " + d.links.length + " liên kết" : "chưa có dữ liệu liên kết"));
+  box.appendChild(kpi("Luồng thông", flowsOk + "/" + d.flows.length, "các luồng ping được đo liên tục"));
+  box.appendChild(kpi("Sự cố đang mở", Object.keys(ids).length, "gắn với các thiết bị trên sơ đồ"));
+  var lg = $("map-legend"); clear(lg);
+  [["st-ok", "Bình thường (✓)"], ["st-warn", "Cảnh báo (!)"], ["st-bad", "Lỗi (✕)"]].forEach(function (x) {
+    var it = el("span", "it " + x[0]); it.appendChild(el("i", "dotl")); it.appendChild(document.createTextNode(x[1])); lg.appendChild(it);
+  });
+  var a = el("span", "it"); a.appendChild(el("i", "solid")); a.appendChild(document.createTextNode("Liên kết khỏe (nét chạy)")); lg.appendChild(a);
+  var b = el("span", "it"); b.appendChild(el("i", "dash")); b.appendChild(document.createTextNode("Liên kết đứt (nét đứt, dấu ✕)")); lg.appendChild(b);
+  lg.appendChild(document.createTextNode("Bấm vào một thiết bị để xem chi tiết."));
 }
 
 function showNodeDetail(name) {
@@ -1251,6 +1312,7 @@ function refreshMap() {
       notice.textContent = "Không đọc được lab/topology.clab.yml (" + d.links_source + "): chỉ vẽ thiết bị, chưa có đường nối. " +
         "Hãy chạy máy chủ web từ thư mục gốc của dự án.";
     }
+    renderMapSummary(d);
     drawMap(d);
     if (mapSel) showNodeDetail(mapSel);
     table($("map-flows"), ["Luồng", "Trạng thái", "Mất gói", "RTT TB (ms)"],
