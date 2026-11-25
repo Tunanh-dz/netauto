@@ -10,7 +10,7 @@ class TestWidgets(unittest.TestCase):
         self.html = PAGE.read_text(encoding="utf-8")
 
     def test_overview_widgets_exist(self):
-        for widget_id in ("widget-nodes", "widget-health", "widget-flows", "ring-uptime", "ring-fix"):
+        for widget_id in ("widget-flows", "ring-uptime", "ring-fix"):     # 33J: cây thiết bị và biểu đồ tròn đã bỏ (trùng Sơ đồ, trùng dải trạng thái)
             self.assertIn(widget_id, self.html)
 
     def test_overview_uses_topology_and_history(self):
@@ -22,9 +22,6 @@ class TestWidgets(unittest.TestCase):
     def test_rings_are_drawn_in_svg_with_a_text_alternative(self):
         self.assertIn("stroke-dasharray", self.html)
         self.assertIn("aria-label", self.html)
-
-    def test_node_card_on_hover(self):
-        self.assertIn("nodecard", self.html)
 
     def test_rings_say_when_there_is_no_data(self):
         self.assertIn("Chưa có dữ liệu", self.html)
@@ -87,7 +84,7 @@ class TestRingHonesty(unittest.TestCase):
         self.assertIn("99.9", body)
 
     def test_ring_draws_the_missing_part_as_its_own_arc(self):
-        body = self.html[self.html.index("function ring("):self.html.index("var STATUS_NAME")]
+        body = self.html[self.html.index("function ring("):self.html.index("function barCell")]
         self.assertIn("lossarc", body)
         self.assertIn(".lossarc", self.html)
 

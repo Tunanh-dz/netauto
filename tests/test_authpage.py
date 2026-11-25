@@ -20,8 +20,8 @@ class TestAuthUi(unittest.TestCase):
     def test_users_tab_exists_and_is_admin_only(self):
         self.assertIn('id="tab-users"', self.html)
         nav = self.html[self.html.index('<nav id="nav">'):self.html.index("</nav>")]
-        link = nav[nav.index('data-tab="users"') - 60:nav.index('data-tab="users"') + 80]
-        self.assertIn("hidden", link)                              # ẩn cho tới khi biết là quản trị
+        self.assertNotIn('data-tab="users"', nav)                  # 33J: lối vào chuyển sang menu người dùng
+        self.assertRegex(self.html, r'<a class="menuitem" id="menu-users" href="#users" hidden>')   # ẩn cho tới khi biết là quản trị
         self.assertIn("users: refreshUsers", self.html)
         self.assertIn('"admin"', self.js)
 

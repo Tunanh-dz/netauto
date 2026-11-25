@@ -14,7 +14,7 @@ class TestOverviewPage(unittest.TestCase):
         self.assertTrue(self.html.lstrip().lower().startswith("<!doctype html>"))
 
     def test_uses_the_read_only_api(self):
-        for path in ("/api/status", "/api/incidents", "/api/health", "/api/remediations"):
+        for path in ("/api/status", "/api/health", "/api/remediations", "/api/events"):
             self.assertIn(path, self.html)
 
     def test_works_offline_no_external_resources(self):

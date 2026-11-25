@@ -190,8 +190,11 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
         return query(webdata.incident_list, limit, only_open)
 
     @app.get("/api/events")
-    def incident_events(limit: int | None = None, only_open: bool = False):
-        return query(webdata.incident_events, limit, only_open)
+    def incident_events(limit: int | None = None, only_open: bool = False, state: str | None = None):
+        try:
+            return query(webdata.incident_events, limit, only_open, state=state)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     @app.get("/api/health")
     def health_history(limit: int | None = None):

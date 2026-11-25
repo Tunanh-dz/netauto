@@ -14,8 +14,8 @@ from types import SimpleNamespace
 import yaml
 
 from netauto import intent as intent_mod
-from netauto import (audit, db, health, incidents, injections, maintenance, probe, remediation,
-                     runs, service)
+from netauto import (audit, db, diagnosis, health, incidents, injections, maintenance, probe,
+                     remediation, runs, service)
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
@@ -52,14 +52,28 @@ def overview(conn, now: str | None = None) -> dict:
     now = now or runs.now()
     latest = health.list_health(conn, 1)
     history = remediation.list_history(conn, 200)
+    monitor = service.status(conn, now)
+    in_maintenance = len(maintenance.windows_at(conn, now))
+    breaker = remediation.breaker_open(history, now)
+    # "headline" dùng cùng cách đếm với tab Sự cố (sự kiện gốc, không đếm triệu chứng) nên hai trang luôn khớp số
+    severities = [r[0] for r in conn.execute(
+        f"SELECT severity FROM incidents WHERE {_IS_ROOT} AND {_EVENT_OPEN} ORDER BY id")]
+    old = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        open_rows = [dict(r) for r in conn.execute(
+            "SELECT node, check_code, kind, severity FROM incidents WHERE closed_at IS NULL")]
+    finally:
+        conn.row_factory = old
     return {
         "generated_at": now,
-        "monitor": service.status(conn, now),
+        "monitor": monitor,
         "health": _health_row(latest[0]) if latest else None,
         "open_incidents": len(incidents.open_incidents(conn)),
-        "maintenance_active": len(maintenance.windows_at(conn, now)),
+        "maintenance_active": in_maintenance,
         "last_remediation": history[-1] if history else None,
-        "breaker_open": remediation.breaker_open(history, now),
+        "breaker_open": breaker,
+        "headline": diagnosis.headline(monitor["state"], severities, open_rows, in_maintenance, breaker),
     }
 
 
@@ -433,6 +447,11 @@ CATEGORY = {
     "device.reachable": "device", "device.unknown": "device",
 }
 EVENT_WINDOW_S = 24 * 3600
+EVENT_STATES = ("all", "open", "closed")
+_IS_ROOT = "(root_id IS NULL OR root_id = id)"
+# Sự kiện còn "đang diễn ra" khi gốc chưa đóng, hoặc gốc đã đóng mà còn triệu chứng chưa đóng.
+_EVENT_OPEN = ("(closed_at IS NULL OR EXISTS (SELECT 1 FROM incidents s WHERE s.root_id = incidents.id "
+               "AND s.id != incidents.id AND s.closed_at IS NULL))")
 
 
 def category_of(check_code) -> str:
@@ -459,19 +478,26 @@ def _impact(scope_text, intent_vlans: set) -> dict:
 
 
 def incident_events(conn, limit=None, only_open: bool = False, now: str | None = None,
-                    intent_path: str | None = None) -> dict:
+                    intent_path: str | None = None, state: str | None = None) -> dict:
     """Mỗi sự kiện = một sự cố GỐC cùng các triệu chứng của nó, kèm nhóm lỗi, mức ảnh hưởng
-    (số VLAN bị ảnh hưởng, lấy từ scope) và kết quả tự sửa gần nhất. Chỉ đọc."""
+    (số VLAN bị ảnh hưởng, lấy từ scope) và kết quả tự sửa gần nhất. Chỉ đọc.
+
+    `state`: "open" = đang diễn ra (nghiêm trọng trước, rồi mới nhất trước), "closed" = lịch sử (mới nhất
+    trước), "all" hoặc None = cả hai (None kèm only_open=True nghĩa là "open"). Giới hạn `limit` tính
+    ngay trong nhóm được chọn, để sự cố đang mở không chiếm chỗ của lịch sử."""
+    if state is None:
+        state = "open" if only_open else "all"
+    if state not in EVENT_STATES:
+        raise ValueError(f"state không hợp lệ: {state!r} (chỉ nhận: {', '.join(EVENT_STATES)})")
     now = now or datetime.now().astimezone().isoformat(timespec="seconds")
     intent_vlans = {int(v) for v in intent_mod.load_intent(intent_path or intent_mod.INTENT_PATH)["vlans"]}
     old = conn.row_factory
     conn.row_factory = sqlite3.Row
     try:
-        is_root = "(root_id IS NULL OR root_id = id)"
-        open_clause = ("(closed_at IS NULL OR EXISTS (SELECT 1 FROM incidents s WHERE s.root_id = incidents.id "
-                       "AND s.id != incidents.id AND s.closed_at IS NULL))")
-        where = is_root + (" AND " + open_clause if only_open else "")
-        roots = conn.execute(f"SELECT * FROM incidents WHERE {where} ORDER BY id DESC LIMIT ?",
+        where = {"open": f"{_IS_ROOT} AND {_EVENT_OPEN}", "closed": f"{_IS_ROOT} AND NOT {_EVENT_OPEN}",
+                 "all": _IS_ROOT}[state]
+        order = "(severity = 'critical') DESC, id DESC" if state == "open" else "id DESC"
+        roots = conn.execute(f"SELECT * FROM incidents WHERE {where} ORDER BY {order} LIMIT ?",
                              (clamp_limit(limit, 50, 300),)).fetchall()
         ids = [r["id"] for r in roots]
         marks = ",".join("?" * len(ids))
@@ -485,9 +511,12 @@ def incident_events(conn, limit=None, only_open: bool = False, now: str | None =
                 fixes[f["incident_id"]] = f            # dòng sau ghi đè dòng trước: lấy lần thử gần nhất
         out = [_event(r, kids[r["id"]], fixes.get(r["id"]), intent_vlans) for r in roots]
         summary = _event_summary(conn, now)
+        # chẩn đoán tính trên MỌI sự cố đang mở, không phụ thuộc giới hạn số thẻ hay bộ lọc đang xem
+        open_rows = [dict(r) for r in conn.execute(
+            "SELECT node, check_code, kind FROM incidents WHERE closed_at IS NULL")]
     finally:
         conn.row_factory = old
-    return {"events": out, "summary": summary,
+    return {"events": out, "summary": summary, "diagnosis": diagnosis.diagnose(open_rows),
             "nodes": node_names(intent_path)}     # đủ mọi thiết bị để ô lọc không bị thiếu
 
 
@@ -498,6 +527,7 @@ def _event(root, symptoms, fix_row, intent_vlans) -> dict:
     return {
         "id": root["id"], "node": root["node"], "severity": root["severity"], "kind": root["kind"],
         "check_code": root["check_code"], "category": category_of(root["check_code"]),
+        "infra": diagnosis.is_infra(root["check_code"], root["kind"]),
         "message": root["message"], "opened_at": root["opened_at"], "closed_at": closed,
         "close_reason": root["close_reason"], "duration_s": duration,
         "open": is_open,
@@ -518,7 +548,8 @@ def _event_summary(conn, now: str) -> dict:
     rows = [r for r in conn.execute("SELECT * FROM incidents WHERE (root_id IS NULL OR root_id = id)")
             if r["opened_at"] >= since or r["closed_at"] is None]
     recent = [r for r in rows if r["opened_at"] >= since]
-    open_rows = [r for r in rows if r["closed_at"] is None]
+    open_rows = conn.execute(f"SELECT severity FROM incidents WHERE {_IS_ROOT} AND {_EVENT_OPEN}").fetchall()
+    closed_total = conn.execute(f"SELECT COUNT(*) FROM incidents WHERE {_IS_ROOT} AND NOT {_EVENT_OPEN}").fetchone()[0]
     durations = [_seconds_between(r["opened_at"], r["closed_at"]) for r in recent if r["closed_at"]]
     by_category: dict = {}
     by_node: dict = {}
@@ -532,7 +563,7 @@ def _event_summary(conn, now: str) -> dict:
     tried = [latest[r["id"]] for r in recent if r["id"] in latest and latest[r["id"]]["outcome"] in FIX_ATTEMPTS]
     ok = sum(1 for f in tried if f["outcome"] == "fixed")
     return {
-        "events_24h": len(recent), "open_events": len(open_rows),
+        "events_24h": len(recent), "open_events": len(open_rows), "closed_events": closed_total,
         "open_critical": sum(1 for r in open_rows if r["severity"] == "critical"),
         "open_warning": sum(1 for r in open_rows if r["severity"] == "warning"),
         "mttr_s": round(sum(durations) / len(durations), 1) if durations else None,
