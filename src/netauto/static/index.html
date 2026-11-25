@@ -116,7 +116,12 @@
   .msgrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-bottom: 16px; }
   .mscard { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
   .mscard h3 { margin: 0 0 2px; font-size: 15px; }
-  .mscard .desc { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .mscard .code { color: var(--muted); font: 12px ui-monospace, Menlo, monospace; margin-bottom: 8px; }
+  .mscard .msline { font-size: 14px; }
+  .msmore { margin-top: 8px; } .msmore summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+  .mapline { display: flex; align-items: center; gap: 4px; margin: 0 0 12px; padding: 8px 14px; border-radius: 8px;
+              border: 1px solid var(--c); background: var(--cbg); font-weight: 600; color: var(--c); }
+  .mapline .dotl { width: 10px; height: 10px; border-radius: 50%; background: var(--c); margin-right: 8px; }
   .msrow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
   .tag.ms-ok { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
   .tag.ms-bad { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
@@ -224,6 +229,15 @@
   .cfsec pre { margin: 0; padding: 10px 12px; border-top: 1px solid var(--line); max-height: 420px; overflow: auto; font: 12.5px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 12px; }
   tr.click { cursor: pointer; }
+  .ausum { margin: 0 0 12px; }
+  .aucard .head .autime { margin-left: auto; color: var(--muted); font-size: 13px; }
+  .aucard .aualert { color: var(--bad); font-weight: 600; }
+  .fxsum { font-weight: 600; } .fxtoggle { color: var(--accent); white-space: nowrap; text-align: right; }
+  tr.click:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  @media (max-width: 700px) { #fix-all th:nth-child(3), #fix-all td:nth-child(3), #fix-all th:nth-child(5), #fix-all td:nth-child(5) { display: none; }
+                              #fix-all tr.fxrow td { display: table-cell; } }      /* điện thoại: giữ lúc, thiết bị, kết quả; phần còn lại xem trong Chi tiết */
+  #ms-scope-box { margin: 0 0 12px; }
+  tr.fxrow td { background: var(--idle-bg); } .fxdet { display: grid; gap: 3px; font-size: 13px; padding: 4px 6px; } .fxdet a { color: var(--accent); }
   tr.click:hover td { background: var(--idle-bg); }
   .detail { margin-top: 16px; padding: 14px 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
   .detail h3 { margin: 0 0 6px; font-size: 15px; }
@@ -331,7 +345,6 @@
   .whead h2 { font-size: 15px; margin: 0; }
   .whead .sub { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
   .wbody { padding: 12px 16px; }
-  #widget-flows { margin-top: 16px; }
   #kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   @media (max-width: 800px) { #kpis { grid-template-columns: 1fr; } }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; background: var(--idle); }
@@ -403,26 +416,22 @@
   </div>
 
   <div class="widget recent" id="widget-recent">
-    <div class="whead"><h2>Diễn biến gần đây</h2><span class="sub">Các sự kiện mới nhất: lỗi xảy ra lúc nào, kết thúc ra sao</span><a class="seeall" href="#incidents/history">Xem lịch sử →</a></div>
+    <div class="whead"><h2>Diễn biến gần đây</h2><span class="sub">Các sự cố mới nhất: lỗi xảy ra lúc nào, kết thúc ra sao</span><a class="seeall" href="#incidents/history">Xem lịch sử →</a></div>
     <div class="wbody" id="ov-recent"></div>
   </div>
 
-  <div class="widget" id="widget-flows">
-    <div class="whead"><h2>Luồng có độ trễ cao nhất</h2><span class="sub">Lần đo gần nhất</span></div>
-    <div class="tablewrap" id="flows-bars" style="border:0;border-radius:0"></div>
-  </div>
   </div>
 
   <div id="tab-map" class="panel" hidden>
     <div id="map-notice" class="notice" hidden></div>
-    <div id="map-summary" class="evkpis"></div>
+    <div id="map-summary" class="mapline"></div>
     <div id="map-legend" class="maplegend"></div>
     <svg id="map" class="map" viewBox="0 0 760 440" role="img" aria-label="Sơ đồ mạng"></svg>
     <div id="map-detail"></div>
-    <section>
-      <h2>Các luồng được đo</h2>
+    <details class="tableview" id="map-flows-box">
+      <summary>Chi tiết các luồng đo (<span id="map-flows-count">0</span>)</summary>
       <div class="tablewrap" id="map-flows"></div>
-    </section>
+    </details>
   </div>
 
   <div id="tab-charts" class="panel" hidden>
@@ -448,13 +457,6 @@
       <div class="legend"><span><i class="critical"></i>Nghiêm trọng</span><span><i class="warning"></i>Cảnh báo</span></div>
     </div>
 
-    <div class="chartcard" id="card-buckets">
-      <h2>Số sự cố mới theo thời gian</h2>
-      <p class="muted sub">Mỗi cột là một khoảng bằng nhau; chiều cao là số sự cố mở trong khoảng đó.</p>
-      <svg id="chart-buckets" class="chart" viewBox="0 0 900 200" role="img" aria-label="Số sự cố mới theo thời gian"></svg>
-      <div class="legend"><span><i class="critical"></i>Nghiêm trọng</span><span><i class="warning"></i>Cảnh báo</span></div>
-    </div>
-
     <div class="chartcard" id="card-flows">
       <h2>Độ trễ từng luồng</h2>
       <p class="muted sub">Đường xanh: RTT trung bình (ms). Chấm đỏ: lần đo có mất gói.</p>
@@ -471,7 +473,7 @@
   <div id="tab-incidents" class="panel" hidden>
     <div class="subnav" id="ev-subnav" role="tablist" aria-label="Loại sự cố">
       <button class="subbtn" role="tab" data-view="open" aria-selected="true"><b>Đang diễn ra</b><span id="ev-count-open">sự cố đang mở</span></button>
-      <button class="subbtn" role="tab" data-view="history" aria-selected="false"><b>Lịch sử</b><span id="ev-count-history">sự kiện đã đóng</span></button>
+      <button class="subbtn" role="tab" data-view="history" aria-selected="false"><b>Lịch sử</b><span id="ev-count-history">sự cố đã đóng</span></button>
     </div>
     <div id="ev-diag"></div>
     <div id="ev-kpis" class="evkpis"></div>
@@ -497,14 +499,17 @@
   </div>
 
   <div id="tab-fixes" class="panel" hidden>
-    <div class="toolbar"><span id="breaker-state" class="pill">-</span>
-      <span class="muted">Mỗi dòng là một lần bộ tự sửa chạy lệnh apply cho một thiết bị.</span></div>
+    <div class="toolbar"><span id="fx-summary" class="fxsum">-</span>
+      <span id="breaker-state" class="pill bad" hidden>Tự sửa đang tạm dừng: cầu chì đã ngắt</span></div>
     <div class="tablewrap" id="fix-all"></div>
   </div>
 
   <div id="tab-measure" class="panel" hidden>
     <div id="ms-kpis" class="evkpis"></div>
-    <div class="muted msnote">Số liệu từ các lần gây lỗi có chủ đích (injector) trên lab: thời gian tính từ lúc gây lỗi, không phải từ lúc hệ thống thấy lỗi.</div>
+    <div class="muted msnote">Đo trên lab bằng cách cố ý gây lỗi rồi bấm giờ. Thời gian tính từ lúc gây lỗi, không phải từ lúc hệ thống thấy lỗi.</div>
+    <details class="tableview" id="ms-scope-box" hidden><summary>Phạm vi và giới hạn của số liệu</summary>
+      <p class="muted msnote" id="ms-scope"></p>
+    </details>
     <div id="ms-faults" class="msgrid"></div>
     <details class="tableview"><summary>Xem dạng bảng: các lần đo gần nhất</summary>
       <div class="tablewrap" id="ms-table"></div>
@@ -514,10 +519,10 @@
   <div id="tab-audit" class="panel" hidden>
     <div id="au-banner" class="aubanner"></div>
     <div class="subnav" id="au-subnav" role="tablist" aria-label="Loại nhật ký">
-      <button class="subbtn" role="tab" data-view="action" aria-selected="true"><b>Thao tác</b><span id="au-count-action">áp dụng, tự sửa, bảo trì, phòng ban, tài khoản</span></button>
-      <button class="subbtn" role="tab" data-view="login" aria-selected="false"><b>Đăng nhập</b><span id="au-count-login">ai đăng nhập, đăng nhập sai, bị khóa</span></button>
+      <button class="subbtn" role="tab" data-view="action" aria-selected="true"><b>Thao tác</b><span id="au-count-action">-</span></button>
+      <button class="subbtn" role="tab" data-view="login" aria-selected="false"><b>Đăng nhập</b><span id="au-count-login">-</span></button>
     </div>
-    <div id="au-kpis" class="evkpis"></div>
+    <div id="au-summary" class="fxsum ausum"></div>
     <div class="evfilters" id="au-filters"></div>
     <div id="au-list"></div>
     <div id="au-detail"></div>
@@ -754,34 +759,12 @@ function ring(svg, pct, centerText, label, toneFn) {
         transform: "rotate(-90 60 60)", "class": "lossarc"}));
     }
   }
-  svg.appendChild(svgEl("text", {x: 60, y: 68, "text-anchor": "middle", "class": "ringnum"}, centerText));
+  svg.appendChild(svgEl("text", {x: 60, y: centerText.length > 4 ? 66 : 68, "text-anchor": "middle", "class": "ringnum",
+    style: centerText.length > 4 ? "font-size:19px" : ""}, centerText));      // "100.0%" dài hơn "83%": thu chữ để không tràn vòng
   svg.setAttribute("aria-label", label);
 }
 
-function barCell(pct, tone, text) {
-  var wrap = el("span", ""), bar = el("span", "bar"), fill = el("i", tone);
-  fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
-  bar.appendChild(fill); wrap.appendChild(bar); wrap.appendChild(document.createTextNode(text));
-  return wrap;
-}
-
-function renderFlowBars(topo) {
-  if (!topo) { table($("flows-bars"), ["Luồng"], [], "Chưa có dữ liệu"); return; }
-  var flows = topo.flows.slice().sort(function (a, b) {
-    return (b.loss_pct || 0) - (a.loss_pct || 0) || (b.rtt_avg || 0) - (a.rtt_avg || 0);
-  });
-  table($("flows-bars"), ["Luồng", "RTT trung bình", "Mất gói"], flows.map(function (f) {
-    if (f.state === "unknown") return [{text: f.src + " → " + f.dst}, {text: "-"}, {text: "-"}];
-    var rttTone = f.rtt_avg === null ? "bad" : (f.rtt_avg >= 10 ? "warn" : "ok");
-    var lossTone = f.loss_pct >= 50 ? "bad" : (f.loss_pct > 0 ? "warn" : "ok");
-    return [{text: f.src + " → " + f.dst},
-            {node: barCell(f.rtt_avg === null ? 100 : f.rtt_avg / 20 * 100, rttTone, f.rtt_avg === null ? "không có" : num(f.rtt_avg, 1) + " ms")},
-            {node: barCell(f.loss_pct, lossTone, num(f.loss_pct, 0) + "%")}];
-  }), "Intent chưa khai báo luồng nào.");
-}
-
-function renderWidgets(topo, hist) {
-  renderFlowBars(topo);
+function renderWidgets(hist) {
   var sum = hist && hist.summary;
   var av = sum ? sum.availability_pct : null, fx = sum ? sum.fix_success_pct : null;
   ring($("ring-uptime"), av, av === null ? "-" : av.toFixed(1) + "%",
@@ -859,14 +842,13 @@ function refreshOverview() {
   return Promise.all([
     getJSON("/api/status"),
     getJSON("/api/health?limit=60"),
-    getJSON("/api/topology").catch(function () { return null; }),
     getJSON("/api/history?range=1h").catch(function () { return null; }),
     getJSON("/api/events?limit=6").catch(function () { return null; })
   ]).then(function (r) {
     var status = r[0], hist = r[1];
     renderHero(status.headline);
-    renderWidgets(r[2], r[3]);
-    renderRecent(r[4]);
+    renderWidgets(r[2]);
+    renderRecent(r[3]);
     renderMonitor(status.monitor);
     renderHealth(status.health, hist.items);
     $("maint").hidden = !status.maintenance_active;
@@ -919,8 +901,8 @@ function renderOpenKpis(d) {
 }
 function renderHistoryKpis(sm) {
   var box = $("ev-kpis"); clear(box);
-  box.appendChild(kpi("Sự kiện 24 giờ qua", sm.events_24h, "mỗi sự kiện gồm sự cố gốc và triệu chứng"));
-  box.appendChild(kpi("Thời gian khắc phục TB", sm.mttr_s === null ? "-" : fmtAge(sm.mttr_s), "tính trên sự kiện đã đóng"));
+  box.appendChild(kpi("Sự cố 24 giờ qua", sm.events_24h, "mỗi sự cố gồm nguyên nhân gốc và các triệu chứng"));
+  box.appendChild(kpi("Thời gian khắc phục TB", sm.mttr_s === null ? "-" : fmtAge(sm.mttr_s), "tính trên sự cố đã đóng"));
   box.appendChild(kpi("Tự sửa thành công", sm.fix_success_pct === null ? "-" : sm.fix_success_pct + "%",
                       sm.fix_attempted ? sm.fix_ok + "/" + sm.fix_attempted + " lần thử" : "chưa có lần thử nào"));
 }
@@ -1003,7 +985,7 @@ function renderEvents() {
   var d = evState.data; if (!d) return;
   var open = evState.view === "open";
   $("ev-count-open").textContent = d.summary.open_events + " đang mở";
-  $("ev-count-history").textContent = d.summary.closed_events + " sự kiện đã đóng";
+  $("ev-count-history").textContent = d.summary.closed_events + " sự cố đã đóng";
   renderDiagnosis(open ? d.diagnosis : null);          // chẩn đoán chỉ có nghĩa với những gì đang diễn ra
   var wide = !open || !d.events.length;                // lịch sử (bảng) và trạng thái "ổn" dùng hết bề ngang
   document.querySelector("#tab-incidents .evcols").classList.toggle("wide", wide);
@@ -1024,7 +1006,7 @@ function renderEventsOpen(d) {
     var ok = el("div", "evempty");
     ok.appendChild(el("div", "etitle", "Hệ thống ổn: không có sự cố nào đang diễn ra."));
     ok.appendChild(el("div", "muted", d.summary.closed_events
-      ? "Đã ghi nhận " + d.summary.closed_events + " sự kiện trước đó, xem ở phần Lịch sử."
+      ? "Đã ghi nhận " + d.summary.closed_events + " sự cố trước đó, xem ở phần Lịch sử."
       : "Chưa có sự cố nào được ghi nhận."));
     list.appendChild(ok);
     return;
@@ -1033,7 +1015,7 @@ function renderEventsOpen(d) {
   selectFilter(box, "Nhóm lỗi", "cat", Object.keys(CATEGORY_NAME), CATEGORY_NAME);
   selectFilter(box, "Thiết bị", "node", d.nodes, null);
   var shown = d.events.filter(eventMatches);
-  if (!shown.length) list.appendChild(el("div", "muted", "Không có sự kiện nào khớp bộ lọc."));
+  if (!shown.length) list.appendChild(el("div", "muted", "Không có sự cố nào khớp bộ lọc."));
   shown.forEach(function (e) { list.appendChild(eventCard(e)); });
 }
 function renderEventHistory(d) {
@@ -1053,7 +1035,7 @@ function renderEventHistory(d) {
               {text: e.message + (e.symptoms.length ? " (+" + e.symptoms.length + " triệu chứng)" : ""), cls: "msg"},
               {node: pill(HOW_NAME[how], how === "auto_fix" ? "ok" : "")}, {text: "#" + e.id}];
     }),
-    "Chưa có sự kiện nào đã đóng khớp bộ lọc.");
+    "Chưa có sự cố nào đã đóng khớp bộ lọc.");
   sideBars($("ev-by-category"), d.summary.by_category, CATEGORY_NAME);
   sideBars($("ev-by-node"), d.summary.by_node, null);
 }
@@ -1077,22 +1059,73 @@ function refreshIncidents() {
   });
 }
 
+var OUTCOME_VN = {fixed: "Đã sửa", refused: "Bị từ chối", failed: "Thất bại", rolled_back: "Đã hoàn tác",
+                  ineffective: "Chưa hiệu quả", reset: "Mở lại cầu chì"};
+var CHECK_VN = {"router.subinterface": "Cổng con VLAN trên router", "router.uplink": "Cổng nối lên (uplink)",
+                "router.route": "Định tuyến", "router.ospf": "Định tuyến OSPF", "host.interface": "Cổng mạng máy trạm",
+                "host.gateway": "Cổng mặc định của máy trạm", "switch.access": "Cổng VLAN trên switch", "switch.trunk": "Cổng trunk"};
+var fxOpen = {};           // các hàng đang mở chi tiết, nhớ qua lần tự làm mới
+
+function fixDetail(r) {
+  var d = el("div", "fxdet");
+  var rows = [["Lỗi", CHECK_VN[r.check_code] || r.check_code, null],
+              ["Sự cố", "#" + r.incident_id, "#incidents/history"],
+              ["Loại kiểm tra", r.check_code, null],
+              ["Kết thúc", r.finished_at ? stamp(r.finished_at) : "chưa xong", null],
+              ["Mã thoát", r.exit_code === null || r.exit_code === undefined ? "-" : String(r.exit_code), null],
+              ["Kiểm toán", r.audit_id ? "#" + r.audit_id : "-", r.audit_id ? "#audit" : null]];
+  rows.forEach(function (x) {
+    var line = el("div", "");
+    line.appendChild(el("b", "", x[0] + ": "));
+    if (x[2]) { var a = el("a", "", x[1]); a.href = x[2]; line.appendChild(a); } else line.appendChild(document.createTextNode(x[1]));
+    d.appendChild(line);
+  });
+  if (r.detail) { var why = el("div", ""); why.appendChild(el("b", "", "Ghi chú: ")); why.appendChild(document.createTextNode(r.detail)); d.appendChild(why); }
+  return d;
+}
+
+function renderFixTable(items) {
+  var box = $("fix-all"); clear(box);
+  if (!items.length) { box.appendChild(el("div", "empty", "Chưa có lần tự sửa nào.")); return; }
+  var t = el("table"), head = el("tr");
+  ["Lúc", "Thiết bị", "Lỗi", "Kết quả", "Mất bao lâu", ""].forEach(function (h) { head.appendChild(el("th", "", h)); });
+  var thead = el("thead"); thead.appendChild(head); t.appendChild(thead);
+  var tb = el("tbody");
+  items.slice().reverse().forEach(function (r) {
+    var tr = el("tr", "click");
+    tr.setAttribute("tabindex", "0");
+    var took = r.outcome === "refused" || !r.finished_at ? "-" : fmtAge(Math.max(0, secondsBetween(r.started_at, r.finished_at)));
+    var open = !!fxOpen[r.id];
+    var outcome = el("td", ""); outcome.appendChild(pill(OUTCOME_VN[r.outcome] || r.outcome || "đang chạy", OUTCOME_TONE[r.outcome] || ""));
+    tr.appendChild(el("td", "", stamp(r.started_at)));
+    tr.appendChild(el("td", "", r.node));
+    tr.appendChild(el("td", "", CHECK_VN[r.check_code] || r.check_code));
+    tr.appendChild(outcome);
+    tr.appendChild(el("td", "", took));
+    tr.appendChild(el("td", "fxtoggle", open ? "Ẩn ▴" : "Chi tiết ▾"));
+    tr.setAttribute("aria-expanded", String(open));
+    var toggle = function () { fxOpen[r.id] = !fxOpen[r.id]; renderFixTable(items); };
+    tr.addEventListener("click", function (e) { if (e.target.tagName !== "A") toggle(); });
+    tr.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+    tb.appendChild(tr);
+    if (open) {
+      var dr = el("tr", "fxrow"), td = el("td", ""); td.colSpan = 6; td.appendChild(fixDetail(r)); dr.appendChild(td); tb.appendChild(dr);
+    }
+  });
+  t.appendChild(tb); box.appendChild(t);
+}
+
 function refreshFixes() {
   return getJSON("/api/remediations?limit=200").then(function (d) {
     var b = $("breaker-state");
-    b.textContent = d.breaker_open ? "Cầu chì đã ngắt: tạm dừng tự sửa" : "Cầu chì bình thường";
-    b.className = "pill " + (d.breaker_open ? "bad" : "ok");
-    table($("fix-all"),
-      ["#", "Bắt đầu", "Kết thúc", "Thời gian", "Sự cố", "Thiết bị", "Loại lỗi", "Kết quả", "Mã", "Kiểm toán"],
-      d.items.slice().reverse().map(function (r) {
-        var took = r.finished_at ? fmtAge(Math.max(0, secondsBetween(r.started_at, r.finished_at))) : "-";
-        return [{text: r.id}, {text: stamp(r.started_at)}, {text: stamp(r.finished_at)}, {text: took},
-                {text: "#" + r.incident_id}, {text: r.node}, {text: r.check_code},
-                {node: pill(r.outcome || "đang chạy", OUTCOME_TONE[r.outcome] || "")},
-                {text: r.exit_code === null || r.exit_code === undefined ? "-" : r.exit_code},
-                {text: r.audit_id ? "#" + r.audit_id : "-"}];
-      }),
-      "Chưa có lần tự sửa nào.");
+    b.hidden = !d.breaker_open;                       // bình thường không hiện gì; chỉ hiện khi tự sửa bị chặn
+    var fixed = d.items.filter(function (r) { return r.outcome === "fixed"; }).length;
+    var refused = d.items.filter(function (r) { return r.outcome === "refused"; }).length;
+    var other = d.items.length - fixed - refused;
+    $("fx-summary").textContent = d.items.length
+      ? d.items.length + " lần tự sửa gần nhất: " + fixed + " đã sửa, " + refused + " bị từ chối" + (other ? ", " + other + " kết quả khác" : "") + ". Bấm vào một dòng để xem chi tiết."
+      : "Chưa có lần tự sửa nào.";
+    renderFixTable(d.items);
   });
 }
 
@@ -1133,28 +1166,38 @@ function strip(caption, values, median) {
 }
 function faultCard(p) {
   var card = el("div", "mscard");
-  card.appendChild(el("h3", "", p.fault + " · " + p.node));
-  card.appendChild(el("div", "desc", p.description || "Lỗi không còn trong danh mục"));
+  card.appendChild(el("h3", "", p.description || "Lỗi không còn trong danh mục"));
+  card.appendChild(el("div", "code", p.fault + " · " + p.node));
   var row = el("div", "msrow");
   row.appendChild(el("span", "tag " + (p.missed ? "ms-bad" : "ms-ok"), "Phát hiện " + p.detected + "/" + p.runs + " (" + num(p.detect_pct, 0) + "%)"));
   if (p.missed) row.appendChild(el("span", "tag ms-bad", "Bỏ sót " + p.missed));
   if (p.fix_attempts) row.appendChild(el("span", "tag " + (p.fixed === p.fix_attempts ? "ms-ok" : "ms-bad"),
     "Tự sửa " + p.fixed + "/" + p.fix_attempts + " (" + num(p.fix_pct, 0) + "%)"));
   card.appendChild(row);
-  card.appendChild(strip("Cảnh báo có mặt sau", p.alert_values, p.alert_median));
-  if (p.fix_values.length) card.appendChild(strip("Sửa xong sau (MTTR)", p.fix_values, p.fix_median));
+  card.appendChild(el("div", "msline", "Phát hiện lỗi sau " + num(p.alert_median) + " giây (trung vị)"));
+  if (p.fix_values.length) card.appendChild(el("div", "msline", "Tự sửa xong sau " + num(p.fix_median) + " giây (trung vị)"));
+  var more = el("details", "msmore");
+  more.appendChild(el("summary", "", "Xem từng lần đo"));
+  more.appendChild(strip("Phát hiện lỗi sau", p.alert_values, p.alert_median));
+  if (p.fix_values.length) more.appendChild(strip("Tự sửa xong sau", p.fix_values, p.fix_median));
+  card.appendChild(more);
   return card;
 }
 function renderMeasure(d) {
   var s = d.summary, box = $("ms-kpis"); clear(box);
   var rate = s.rate === null || s.rate === undefined ? null : s.rate * 100;
-  box.appendChild(ringKpi("Tỉ lệ phát hiện", rate, rate === null ? "-" : Math.round(rate) + "%", s.detected + "/" + s.runs + " lần, bỏ sót " + s.missed));
-  box.appendChild(kpi("Cảnh báo có mặt (trung vị)", s.median === undefined ? "-" : num(s.median) + " giây",
-    "nhỏ nhất " + num(s.min) + ", lớn nhất " + num(s.max) + " giây"));
-  box.appendChild(kpi("Thời gian sửa MTTR (trung vị)", s.fix_median === undefined ? "-" : num(s.fix_median) + " giây",
-    "nhỏ nhất " + num(s.fix_min) + ", lớn nhất " + num(s.fix_max) + " giây"));
+  box.appendChild(ringKpi("Phát hiện đúng", rate, rate === null ? "-" : Math.round(rate) + "%", s.detected + "/" + s.runs + " lần gây lỗi, bỏ sót " + s.missed));
+  box.appendChild(kpi("Phát hiện lỗi sau", s.median === undefined ? "-" : num(s.median) + " giây",
+    "trung vị · nhanh nhất " + num(s.min) + ", chậm nhất " + num(s.max) + " giây"));
+  box.appendChild(kpi("Tự sửa xong sau", s.fix_median === undefined ? "-" : num(s.fix_median) + " giây",
+    "trung vị · nhanh nhất " + num(s.fix_min) + ", chậm nhất " + num(s.fix_max) + " giây"));
   var tried = s.fixed + s.unfixed, fx = tried ? 100 * s.fixed / tried : null;
-  box.appendChild(ringKpi("Tự sửa thành công", fx, fx === null ? "-" : Math.round(fx) + "%", tried ? s.fixed + "/" + tried + " lần" : "chưa có lần đo tự sửa"));
+  box.appendChild(ringKpi("Tự sửa thành công", fx, fx === null ? "-" : Math.round(fx) + "%", tried ? s.fixed + "/" + tried + " lần thử tự sửa" : "chưa có lần đo tự sửa"));
+  $("ms-scope-box").hidden = !d.per_fault.length;
+  $("ms-scope").textContent = d.per_fault.length
+    ? "Đã đo " + d.per_fault.length + " loại lỗi: " + d.per_fault.map(function (p) { return p.fault; }).join(", ") +
+      ". Chưa đo: các lỗi khác (VLAN sai trên switch, OSPF, vòng lặp, DHCP...). Kết quả chỉ áp dụng cho các lỗi đã đo, trên lab mô phỏng."
+    : "";
   var g = $("ms-faults"); clear(g);
   if (!d.per_fault.length) g.appendChild(el("div", "muted", "Chưa có lần đo nào. Dùng: python3 -m netauto.injector --all --yes"));
   d.per_fault.forEach(function (p) { g.appendChild(faultCard(p)); });
@@ -1175,7 +1218,6 @@ function refreshMeasure() {
 var ACTOR_NAME = {auto: "Máy tự sửa", web: "Giao diện web", manual: "Dòng lệnh"};
 var auState = {data: null, view: "action", result: "all", actor: "all", account: "all", expanded: {}, detail: {}};
 var LOGIN_RESULTS = ["ĐĂNG NHẬP", "ĐĂNG NHẬP SAI", "ĐĂNG NHẬP BỊ KHÓA"];
-var AU_HELP = {action: "áp dụng, tự sửa, bảo trì, phòng ban, tài khoản", login: "ai đăng nhập, đăng nhập sai, bị khóa"};
 
 function stepStatusClass(st) { return st === "XONG" ? "done" : st === "LỖI" ? "failed" : "exists"; }
 var RESULT_HELP = {
@@ -1209,9 +1251,17 @@ function detailValue(key, v) {
   return String(v);
 }
 
-function renderAuditDetail(box, entry) {
+function renderAuditDetail(box, entry, row) {
   var det = entry.detail || {};
   var d = el("div", "audet");
+  if (row) {                                          // phần kỹ thuật: chỉ hiện khi bấm Chi tiết
+    d.appendChild(el("div", "aumeta", "Bản ghi #" + row.id + " · mã thoát " + row.exit_code + " · mất " + num(row.duration_s) + " giây"));
+    if (row.steps.total) {
+      d.appendChild(stepBar(row.steps));
+      d.appendChild(el("div", "aumeta", row.steps.done + " bước xong · " + row.steps.exists + " đã có · " + row.steps.failed + " lỗi"
+        + (row.undo_count ? " · " + row.undo_count + " lệnh hoàn tác" : "")));
+    }
+  }
   if (RESULT_HELP[entry.result]) d.appendChild(el("div", "", RESULT_HELP[entry.result]));
   if (det.reason) d.appendChild(el("div", "", "Lý do: " + det.reason));
   Object.keys(det).forEach(function (k) {
@@ -1256,20 +1306,31 @@ function stepBar(st) {
   });
   return bar;
 }
+var APPLY_RESULTS = {"THÀNH CÔNG": 1, "LỖI": 1, "HOÀN TÁC": 1, "CHƯA HỘI TỤ": 1, "TỪ CHỐI": 1};
+// Câu nói thẳng việc đã làm. Kết quả áp dụng (thành công, lỗi...) không tự nói là áp dụng hay tự sửa nên suy ra từ người làm.
+function auditTitle(r) {
+  if (APPLY_RESULTS[r.result]) {
+    var where = r.nodes === "tất cả" ? "tất cả thiết bị" : r.nodes;
+    return r.actor_kind === "auto" ? "Tự sửa " + where : "Áp dụng cấu hình cho " + where;
+  }
+  var t = r.result.toLowerCase();                     // "THÊM PHÒNG BAN" -> "Thêm phòng ban"
+  return t.charAt(0).toUpperCase() + t.slice(1) + (r.nodes ? " · " + r.nodes : "");
+}
+function auditActor(r) {
+  return r.actor_kind === "web" && r.account ? "Giao diện web · " + r.account : ACTOR_NAME[r.actor_kind];
+}
 function auditCard(r) {
   var card = el("div", "aucard au-" + r.tone);
   var head = el("div", "head");
-  head.appendChild(el("span", "tag au-" + r.tone, r.result));
-  head.appendChild(el("span", "tag", ACTOR_NAME[r.actor_kind] + " (" + r.actor + ")"));
-  head.appendChild(el("span", "tag", "#" + r.id));
-  head.appendChild(el("strong", "", r.nodes));
+  if (APPLY_RESULTS[r.result]) head.appendChild(el("span", "tag au-" + r.tone, r.result));
+  head.appendChild(el("strong", "", auditTitle(r)));
+  head.appendChild(el("span", "autime", stamp(r.at)));
   card.appendChild(head);
-  card.appendChild(el("div", "aumeta", stamp(r.at) + " · " + num(r.duration_s) + " giây · mã thoát " + r.exit_code +
+  card.appendChild(el("div", "aumeta", auditActor(r) + " · mất " + num(r.duration_s) + " giây" +
     (r.flows_before !== null && r.flows_after !== null ? " · Luồng thông " + r.flows_before + " → " + r.flows_after : "")));
-  if (r.steps.total) {
-    card.appendChild(stepBar(r.steps));
-    card.appendChild(el("div", "aumeta", r.steps.done + " xong · " + r.steps.exists + " đã có · " + r.steps.failed + " lỗi"
-      + (r.undo_count ? " · " + r.undo_count + " lệnh hoàn tác" : "")));
+  if (r.steps.failed || r.undo_count) {               // lỗi phải thấy được ngay, không cần mở thẻ
+    card.appendChild(el("div", "aumeta aualert", (r.steps.failed ? r.steps.failed + " bước lỗi" : "") +
+      (r.steps.failed && r.undo_count ? " · " : "") + (r.undo_count ? r.undo_count + " lệnh hoàn tác" : "")));
   }
   var open = !!auState.expanded[r.id];
   var t = el("button", "evtoggle", (open ? "▾ " : "▸ ") + "Chi tiết");
@@ -1282,7 +1343,7 @@ function auditCard(r) {
     } else renderAudit();
   });
   card.appendChild(t);
-  if (open && auState.detail[r.id]) renderAuditDetail(card, auState.detail[r.id]);
+  if (open && auState.detail[r.id]) renderAuditDetail(card, auState.detail[r.id], r);
   return card;
 }
 function renderAudit() {
@@ -1297,25 +1358,22 @@ function renderAudit() {
   ban.appendChild(txt);
   var sm = d.summary, br = sm.by_result, cat = sm.by_category || {login: 0, action: 0};
   var login = auState.view === "login";
-  ["action", "login"].forEach(function (v) { $("au-count-" + v).textContent = cat[v] + " bản ghi · " + AU_HELP[v]; });
-  var box = $("au-kpis"); clear(box);
+  ["action", "login"].forEach(function (v) { $("au-count-" + v).textContent = cat[v] + " bản ghi"; });
+  var line;
   if (login) {
-    box.appendChild(kpi("Đăng nhập thành công", br["ĐĂNG NHẬP"] || 0, "số lần vào giao diện web"));
-    box.appendChild(kpi("Đăng nhập sai", br["ĐĂNG NHẬP SAI"] || 0, "sai tên hoặc sai mật khẩu"));
-    box.appendChild(kpi("Bị khóa", br["ĐĂNG NHẬP BỊ KHÓA"] || 0, "thử vào khi tài khoản đang bị khóa"));
-    box.appendChild(kpi("Tài khoản", (sm.accounts || []).length, "đã xuất hiện trong nhật ký"));
+    line = cat.login + " lần ghi nhận: " + (br["ĐĂNG NHẬP"] || 0) + " đăng nhập thành công, " + (br["ĐĂNG NHẬP SAI"] || 0) +
+      " đăng nhập sai, " + (br["ĐĂNG NHẬP BỊ KHÓA"] || 0) + " bị khóa.";
   } else {
-    box.appendChild(kpi("Tổng thao tác", cat.action, "áp dụng, tự sửa, bảo trì, phòng ban, tài khoản"));
-    box.appendChild(kpi("Thành công", br["THÀNH CÔNG"] || 0, "đã đưa mạng về đúng intent"));
     var attention = 0; Object.keys(br).forEach(function (k) { if (["LỖI", "HOÀN TÁC", "CHƯA HỘI TỤ", "TỪ CHỐI"].indexOf(k) >= 0) attention += br[k]; });
-    box.appendChild(kpi("Cần chú ý", attention, "lỗi, hoàn tác, chưa hội tụ, từ chối"));
-    box.appendChild(kpi("Do máy tự sửa", sm.by_actor_kind.auto || 0, "ghi bởi netauto-remediation"));
+    line = cat.action + " thao tác: " + (br["THÀNH CÔNG"] || 0) + " thành công, " + attention + " cần chú ý (lỗi, hoàn tác, chưa hội tụ, từ chối). " +
+      (sm.by_actor_kind.auto || 0) + " thao tác do máy tự sửa.";
   }
+  $("au-summary").textContent = line;
   var f = $("au-filters"); clear(f);
   var results = login ? LOGIN_RESULTS : Object.keys(br).filter(function (k) { return LOGIN_RESULTS.indexOf(k) < 0; }).sort();
   var filters = [["Kết quả", "result", results, null]];
   if (!login) filters.push(["Người thực hiện", "actor", ["auto", "web", "manual"], ACTOR_NAME]);
-  filters.push(["Tài khoản", "account", sm.accounts || [], null]);
+  if ((sm.accounts || []).length > 1) filters.push(["Tài khoản", "account", sm.accounts, null]);      // một tài khoản thì không có gì để chọn
   filters.forEach(function (c) {
     var wrap = el("label", "evsel", c[0] + " "), sel = el("select");
     sel.setAttribute("aria-label", c[0]);
@@ -1356,7 +1414,7 @@ function auChooseView(view) {
   Array.prototype.forEach.call(document.querySelectorAll("#au-subnav .subbtn"), function (b) {
     b.setAttribute("aria-selected", b.getAttribute("data-view") === view ? "true" : "false");
   });
-  clear($("au-list")); clear($("au-kpis")); clear($("au-filters"));
+  clear($("au-list")); $("au-summary").textContent = ""; clear($("au-filters"));
   refreshAudit().catch(function () { $("banner").style.display = "block"; });
 }
 function refreshAudit() {
@@ -1857,11 +1915,12 @@ function renderMapSummary(d) {
   var ok = d.nodes.filter(function (n) { return n.status === "ok"; }).length;
   var downLinks = d.links.filter(function (l) { return l.status === "bad"; }).length;
   var flowsOk = d.flows.filter(function (f) { return f.state === "ok"; }).length;
-  var ids = {}; d.nodes.forEach(function (n) { n.incidents.forEach(function (i) { ids[i.id] = 1; }); });
-  box.appendChild(kpi("Thiết bị bình thường", ok + "/" + d.nodes.length, d.nodes.length - ok ? (d.nodes.length - ok) + " thiết bị có vấn đề" : "tất cả đều ổn"));
-  box.appendChild(kpi("Liên kết đứt", downLinks, d.links.length ? "trên " + d.links.length + " liên kết" : "chưa có dữ liệu liên kết"));
-  box.appendChild(kpi("Luồng thông", flowsOk + "/" + d.flows.length, "các luồng ping được đo liên tục"));
-  box.appendChild(kpi("Sự cố đang mở", Object.keys(ids).length, "gắn với các thiết bị trên sơ đồ"));
+  var allGood = ok === d.nodes.length && !downLinks && flowsOk === d.flows.length;
+  box.className = "mapline " + (allGood ? "st-ok" : "st-warn");
+  box.appendChild(el("i", "dotl"));
+  box.appendChild(document.createTextNode(ok + "/" + d.nodes.length + " thiết bị bình thường · " +
+    (d.links.length ? downLinks + " liên kết đứt trên " + d.links.length : "chưa có dữ liệu liên kết") + " · " +
+    flowsOk + "/" + d.flows.length + " luồng thông"));
   var lg = $("map-legend"); clear(lg);
   [["st-ok", "Bình thường (✓)"], ["st-warn", "Cảnh báo (!)"], ["st-bad", "Lỗi (✕)"]].forEach(function (x) {
     var it = el("span", "it " + x[0]); it.appendChild(el("i", "dotl")); it.appendChild(document.createTextNode(x[1])); lg.appendChild(it);
@@ -1905,6 +1964,7 @@ function refreshMap() {
     renderMapSummary(d);
     drawMap(d);
     if (mapSel) showNodeDetail(mapSel);
+    $("map-flows-count").textContent = d.flows.length;
     table($("map-flows"), ["Luồng", "Trạng thái", "Mất gói", "RTT TB (ms)"],
       d.flows.map(function (f) {
         var tone = f.state === "ok" ? "ok" : (f.state === "unknown" ? "" : (f.state === "degraded" ? "warn" : "bad"));
@@ -2161,32 +2221,6 @@ function drawTimeline(d) {
   });
 }
 
-// Cột chồng: nghiêm trọng ở dưới, cảnh báo ở trên, khe 2px giữa hai đoạn, đầu cột bo 4px.
-function drawBuckets(d) {
-  var svg = $("chart-buckets"), from = msOf(d.from), to = msOf(d.to);
-  var max = 1; d.buckets.forEach(function (b) { max = Math.max(max, b.critical + b.warning); });
-  var top = max <= 4 ? max : Math.ceil(max / 4) * 4;
-  var ticks = []; for (var t = 0; t <= top; t += Math.max(1, Math.round(top / 4))) ticks.push(t);
-  clear(svg);
-  var f = frame(svg, from, to, 0, top, ticks);
-  var cw = (f.W - f.L - f.R) / d.buckets.length;
-  d.buckets.forEach(function (b, i) {
-    var x = f.L + i * cw + 2, w = Math.max(2, cw - 4), y = f.fy(0);
-    var hc = f.fy(0) - f.fy(b.critical), hw = f.fy(0) - f.fy(b.warning);
-    if (b.critical) { svg.appendChild(svgEl("rect", {x: x, y: y - hc, width: w, height: hc, rx: 3, "class": "bar-critical"})); }
-    if (b.warning) { svg.appendChild(svgEl("rect", {x: x, y: y - hc - hw - (b.critical ? 2 : 0), width: w, height: hw, rx: 3, "class": "bar-warning"})); }
-    var hit = svgEl("rect", {x: f.L + i * cw, y: f.T, width: cw, height: f.H - f.T - f.B, fill: "transparent", tabindex: 0});
-    var show = function (evt) {
-      showTip(evt, stampMs(msOf(b.start)) + " – " + hhmm(msOf(b.start) + (to - from) / d.buckets.length),
-        ["Nghiêm trọng: " + b.critical, "Cảnh báo: " + b.warning]);
-    };
-    hit.addEventListener("pointermove", show); hit.addEventListener("pointerleave", hideTip);
-    hit.addEventListener("focus", function () { var r = hit.getBoundingClientRect(); show({clientX: r.left, clientY: r.top}); });
-    hit.addEventListener("blur", hideTip);
-    svg.appendChild(hit);
-  });
-}
-
 // Nhiều biểu đồ nhỏ: mỗi luồng một biểu đồ một chuỗi, cùng thang thời gian; mất gói đánh dấu bằng chấm.
 function drawFlows(d) {
   var box = $("chart-flows"), from = msOf(d.from), to = msOf(d.to);
@@ -2223,7 +2257,7 @@ function refreshCharts() {
   Array.prototype.forEach.call(cards, function (c) { c.classList.add("loading"); });
   return getJSON("/api/history?range=" + chartRange).then(function (d) {
     if (chartPick && (msOf(chartPick) < msOf(d.from) || msOf(chartPick) > msOf(d.to))) closeWhy();   // điểm đã trượt ra khỏi khoảng đang xem
-    drawHealth(d); drawTimeline(d); drawBuckets(d); drawFlows(d); drawTable(d);
+    drawHealth(d); drawTimeline(d); drawFlows(d); drawTable(d);
     $("chart-meta").textContent = stamp(d.from) + " – " + stamp(d.to) + " · " + d.incidents.length + " sự cố";
   }).then(function () {
     Array.prototype.forEach.call(cards, function (c) { c.classList.remove("loading"); });

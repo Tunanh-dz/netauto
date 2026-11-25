@@ -10,13 +10,13 @@ class TestWidgets(unittest.TestCase):
         self.html = PAGE.read_text(encoding="utf-8")
 
     def test_overview_widgets_exist(self):
-        for widget_id in ("widget-flows", "ring-uptime", "ring-fix"):     # 33J: cây thiết bị và biểu đồ tròn đã bỏ (trùng Sơ đồ, trùng dải trạng thái)
+        for widget_id in ("ring-uptime", "ring-fix"):     # 33J: cây thiết bị và biểu đồ tròn đã bỏ (trùng Sơ đồ, trùng dải trạng thái)
             self.assertIn(widget_id, self.html)
 
-    def test_overview_uses_topology_and_history(self):
+    def test_overview_uses_history_only_for_the_rings(self):         # 33L: bảng luồng đã bỏ nên không cần /api/topology
         start = self.html.index("function refreshOverview")
         body = self.html[start:start + 1500]
-        self.assertIn("/api/topology", body)
+        self.assertNotIn("/api/topology", body)
         self.assertIn("/api/history", body)
 
     def test_rings_are_drawn_in_svg_with_a_text_alternative(self):
@@ -84,7 +84,7 @@ class TestRingHonesty(unittest.TestCase):
         self.assertIn("99.9", body)
 
     def test_ring_draws_the_missing_part_as_its_own_arc(self):
-        body = self.html[self.html.index("function ring("):self.html.index("function barCell")]
+        body = self.html[self.html.index("function ring("):self.html.index("function renderWidgets")]
         self.assertIn("lossarc", body)
         self.assertIn(".lossarc", self.html)
 

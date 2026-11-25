@@ -160,7 +160,7 @@ class TestOverviewPage(unittest.TestCase):
         self.assertNotIn("innerHTML", self.fn("renderHero"))
 
     def test_the_overview_keeps_only_what_answers_a_question_of_its_own(self):
-        for element_id in ("score", "spark", "ring-uptime", "ring-fix", "ov-recent", "widget-flows", "flows-bars"):
+        for element_id in ("score", "spark", "ring-uptime", "ring-fix", "ov-recent"):
             self.assertIn('id="%s"' % element_id, self.overview)
 
     def test_blocks_that_repeat_another_tab_are_gone(self):
@@ -177,7 +177,7 @@ class TestOverviewPage(unittest.TestCase):
         body = self.fn("refreshOverview")
         self.assertNotIn("/api/incidents", body)
         self.assertNotIn("/api/remediations", body)
-        for path in ("/api/status", "/api/health", "/api/topology", "/api/history", "/api/events"):
+        for path in ("/api/status", "/api/health", "/api/history", "/api/events"):
             self.assertIn(path, body)
 
     def test_recent_events_still_lead_to_the_incident_tab(self):

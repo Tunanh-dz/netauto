@@ -14,7 +14,7 @@ class TestMeasureTab(unittest.TestCase):
     def test_headline_ring_and_cards(self):
         for element_id in ("ms-kpis", "ms-faults", "ms-table"):
             self.assertIn(element_id, self.html)
-        self.assertIn("Tỉ lệ phát hiện", self.html)
+        self.assertIn("Phát hiện đúng", self.html)
         self.assertIn("ring(", self.html[self.html.index("function renderMeasure"):])
 
     def test_one_card_per_fault_with_dot_strip(self):
@@ -38,6 +38,18 @@ class TestMeasureTab(unittest.TestCase):
 
     def test_no_raw_html_from_the_network(self):
         self.assertNotIn("innerHTML", self.html)
+
+    def test_labels_say_what_is_measured(self):
+        self.assertIn("Phát hiện đúng", self.html)
+        self.assertIn("lần gây lỗi", self.html)
+        self.assertIn("Tự sửa thành công", self.html)
+        self.assertIn("lần thử", self.html)
+
+    def test_scope_note_lists_measured_faults_and_limits(self):
+        self.assertIn("ms-scope", self.html)
+        body = self.html[self.html.index("function renderMeasure"):]
+        self.assertIn("Đã đo", body)
+        self.assertIn("Chưa đo", body)
 
 
 if __name__ == "__main__":

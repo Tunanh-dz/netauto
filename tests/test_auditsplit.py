@@ -173,7 +173,7 @@ class TestPage(unittest.TestCase):
             self.assertIn(element_id, nav)
 
     def test_old_ids_still_exist(self):
-        for element_id in ("au-banner", "au-kpis", "au-filters", "au-list", "au-detail"):
+        for element_id in ("au-banner", "au-summary", "au-filters", "au-list", "au-detail"):
             self.assertIn(element_id, self.tab)
 
     def test_each_view_asks_the_server_for_its_own_category(self):
@@ -190,7 +190,7 @@ class TestPage(unittest.TestCase):
             self.assertIn(head, body)
 
     def test_login_view_has_its_own_numbers(self):
-        for text in ("Đăng nhập thành công", "Đăng nhập sai", "Bị khóa"):
+        for text in ("đăng nhập thành công", "đăng nhập sai", "bị khóa"):       # 33M: một dòng tóm tắt thay bốn thẻ
             self.assertIn(text, self.js)
 
     def test_both_views_filter_by_account(self):

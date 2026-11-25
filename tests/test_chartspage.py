@@ -20,7 +20,7 @@ class TestChartsTab(unittest.TestCase):
             self.assertIn(f'data-range="{key}"', self.html)
 
     def test_the_four_charts_exist(self):
-        for chart_id in ("chart-health", "chart-timeline", "chart-buckets", "chart-flows"):
+        for chart_id in ("chart-health", "chart-timeline", "chart-flows"):
             self.assertIn(chart_id, self.html)
 
     def test_hover_and_table_view(self):

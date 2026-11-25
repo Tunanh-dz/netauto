@@ -10,7 +10,7 @@ class TestAuditTab(unittest.TestCase):
         self.html = PAGE.read_text(encoding="utf-8")
 
     def test_chain_banner_in_words_not_only_colour(self):
-        for element_id in ("au-banner", "au-kpis", "au-list", "au-detail"):
+        for element_id in ("au-banner", "au-summary", "au-list", "au-detail"):
             self.assertIn(element_id, self.html)
         self.assertIn("Chuỗi băm toàn vẹn", self.html)
         self.assertIn("BỊ SỬA", self.html)
