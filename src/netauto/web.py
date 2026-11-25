@@ -185,6 +185,13 @@ def create_app(db_path: str = db.DB_PATH, *, token: str | None = None, runner=ac
     def history(range: str | None = None):
         return query(webdata.history, range)
 
+    @app.get("/api/moment")
+    def moment(at: str | None = None):
+        try:
+            return query(webdata.moment, at)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
     @app.get("/api/incidents")
     def incident_list(limit: int | None = None, only_open: bool = False):
         return query(webdata.incident_list, limit, only_open)

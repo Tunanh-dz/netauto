@@ -290,6 +290,24 @@
   svg.chart .axis { stroke: var(--muted); stroke-width: 1; }
   svg.chart .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; }
   svg.chart .hair { stroke: var(--muted); stroke-width: 1; }
+  svg.chart .pickline { stroke: var(--ink); stroke-width: 2; stroke-dasharray: 5 3; }
+  svg.chart .pickdot { fill: var(--ink); stroke: var(--surface); stroke-width: 2; }
+  svg.chart rect.pickable { cursor: pointer; }
+  svg.chart rect.pickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* ---- 33K: giải thích vì sao điểm sức khỏe thấp ---- */
+  .whybox { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .whyhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 8px; }
+  .whyhead .chip { margin-left: auto; }
+  .whyscore { font-size: 28px; font-weight: 700; line-height: 1; }
+  .whyscore.ok { color: var(--ok); } .whyscore.warn { color: var(--warn); } .whyscore.bad { color: var(--bad); }
+  .whylead { margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; background: var(--idle-bg); }
+  .whylead.infra { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
+  .whylead a { color: inherit; text-decoration: underline; font-weight: 700; white-space: nowrap; }
+  .whylab { margin: 10px 0 4px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .whylist { list-style: none; margin: 0; padding: 0; }
+  .whylist li { display: flex; gap: 10px; padding: 3px 0; }
+  .whylist b { min-width: 72px; color: var(--bad); font-variant-numeric: tabular-nums; }
+  .whynote { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
   svg.chart .ring { stroke: var(--surface); stroke-width: 2; }
   svg.chart .band { fill: var(--st-critical); opacity: .12; }
   svg.chart .bar-critical { fill: var(--st-critical); }
@@ -418,8 +436,9 @@
 
     <div class="chartcard" id="card-health">
       <h2>Điểm sức khỏe theo thời gian</h2>
-      <p class="muted sub">Dải đỏ nhạt: lúc có sự cố mức nghiêm trọng đang mở. Rê chuột để đọc giá trị.</p>
+      <p class="muted sub">Dải đỏ nhạt: lúc có sự cố mức nghiêm trọng đang mở. Rê chuột để đọc giá trị. Bấm vào một điểm bất kỳ để xem vì sao điểm thấp lúc đó.</p>
       <svg id="chart-health" class="chart" viewBox="0 0 900 240" role="img" aria-label="Điểm sức khỏe theo thời gian"></svg>
+      <div id="health-why" class="whybox" hidden aria-live="polite"></div>
     </div>
 
     <div class="chartcard" id="card-timeline">
@@ -1963,32 +1982,146 @@ function lineChart(svg, from, to, pts, o) {
   (o.marks || []).forEach(function (p) {
     svg.appendChild(svgEl("circle", {cx: f.fx(p.t), cy: f.fy(p.v || 0), r: 4, "class": "lossdot ring"}));
   });
+  if (o.selected !== undefined && o.selected !== null && o.selected >= from && o.selected <= to) {
+    var sx = f.fx(o.selected);                                   // điểm đang được giải thích: vạch đứt giữ nguyên khi trang tự làm mới
+    svg.appendChild(svgEl("line", {x1: sx, x2: sx, y1: f.T, y2: f.H - f.B, "class": "pickline"}));
+    var sp = pts.filter(function (p) { return p.t === o.selected; })[0];
+    if (sp) svg.appendChild(svgEl("circle", {cx: sx, cy: f.fy(sp.v || 0), r: 5, "class": "pickdot"}));
+  }
   var hair = svgEl("line", {y1: f.T, y2: f.H - f.B, "class": "hair"}); hair.style.display = "none"; svg.appendChild(hair);
   var dot = svgEl("circle", {r: 4, fill: "var(--series)", "class": "ring"}); dot.style.display = "none"; svg.appendChild(dot);
-  var hit = svgEl("rect", {x: f.L, y: f.T, width: f.W - f.L - f.R, height: f.H - f.T - f.B, fill: "transparent", tabindex: 0});
-  function at(evt) {
-    var box = svg.getBoundingClientRect();
-    var x = (evt.clientX - box.left) / box.width * f.W, best = pts[0], bd = 1e18;
-    pts.forEach(function (p) { var dx = Math.abs(f.fx(p.t) - x); if (dx < bd) { bd = dx; best = p; } });
+  var hit = svgEl("rect", {x: f.L, y: f.T, width: f.W - f.L - f.R, height: f.H - f.T - f.B, fill: "transparent", tabindex: 0,
+                           "class": o.onPick ? "pickable" : ""});
+  if (o.onPick) hit.setAttribute("aria-label", "Điểm sức khỏe: bấm vào một điểm, hoặc dùng phím mũi tên rồi Enter, để xem nguyên nhân");
+  var cur = -1;
+  function show(best, evt) {
     hair.setAttribute("x1", f.fx(best.t)); hair.setAttribute("x2", f.fx(best.t)); hair.style.display = "";
     dot.setAttribute("cx", f.fx(best.t)); dot.setAttribute("cy", f.fy(best.v || 0)); dot.style.display = "";
     showTip(evt, best.v === null ? "không có RTT" : o.fmt(best.v), [stampMs(best.t)].concat(best.extra || []));
   }
-  hit.addEventListener("pointermove", at);
+  function nearest(evt) {
+    var box = svg.getBoundingClientRect();
+    var x = (evt.clientX - box.left) / box.width * f.W, best = pts[0], bd = 1e18;
+    pts.forEach(function (p, i) { var dx = Math.abs(f.fx(p.t) - x); if (dx < bd) { bd = dx; best = p; cur = i; } });
+    return best;
+  }
+  hit.addEventListener("pointermove", function (evt) { show(nearest(evt), evt); });
   hit.addEventListener("pointerleave", function () { hair.style.display = "none"; dot.style.display = "none"; hideTip(); });
+  if (o.onPick) {
+    hit.addEventListener("click", function (evt) { o.onPick(nearest(evt)); });
+    hit.addEventListener("keydown", function (evt) {      // bàn phím: mũi tên chọn điểm, Enter bấm
+      if (evt.key === "ArrowLeft" || evt.key === "ArrowRight") {
+        cur = Math.max(0, Math.min(pts.length - 1, (cur < 0 ? (evt.key === "ArrowLeft" ? pts.length : -1) : cur) + (evt.key === "ArrowLeft" ? -1 : 1)));
+        var box = svg.getBoundingClientRect();
+        show(pts[cur], {clientX: box.left + f.fx(pts[cur].t) / f.W * box.width, clientY: box.top + box.height / 2});
+        evt.preventDefault();
+      } else if ((evt.key === "Enter" || evt.key === " ") && cur >= 0) {
+        o.onPick(pts[cur]); evt.preventDefault();
+      }
+    });
+  }
   svg.appendChild(hit);
 }
 
 function msOf(iso) { return Date.parse(iso); }
 
+var chartPick = null;      // thời điểm (ISO) người dùng đã bấm để xem nguyên nhân; null = chưa chọn
+var chartData = null;      // dữ liệu lịch sử lần tải gần nhất, để vẽ lại vạch chọn mà không phải tải lại
+
 function drawHealth(d) {
+  chartData = d;
   var from = msOf(d.from), to = msOf(d.to);
   var bands = d.incidents.filter(function (i) { return i.severity === "critical"; }).map(function (i) {
     return [msOf(i.opened_at), i.closed_at ? msOf(i.closed_at) : to];
   });
   lineChart($("chart-health"), from, to,
-    d.health.map(function (h) { return {t: msOf(h.at), v: h.score}; }),
-    {yMin: 0, yMax: 100, yTicks: [0, 25, 50, 75, 100], bands: bands, fmt: function (v) { return v + " điểm"; }});
+    d.health.map(function (h) { return {t: msOf(h.at), v: h.score, at: h.at, extra: ["Bấm để xem vì sao"]}; }),
+    {yMin: 0, yMax: 100, yTicks: [0, 25, 50, 75, 100], bands: bands, fmt: function (v) { return v + " điểm"; },
+     onPick: function (p) { pickMoment(p.at); }, selected: chartPick ? msOf(chartPick) : null});
+}
+
+function pickMoment(at) {
+  chartPick = at;
+  if (chartData) drawHealth(chartData);
+  return getJSON("/api/moment?at=" + encodeURIComponent(at)).then(function (m) {
+    if (chartPick === at) renderWhy(m);              // người dùng đã bấm điểm khác trong lúc chờ thì bỏ kết quả cũ
+  }).catch(function () {
+    var box = $("health-why"); clear(box); box.hidden = false;
+    box.appendChild(el("div", "whylead", "Không tải được nguyên nhân lúc này. Thử bấm lại."));
+  });
+}
+
+function closeWhy() {
+  chartPick = null;
+  var box = $("health-why"); clear(box); box.hidden = true;
+  if (chartData) drawHealth(chartData);
+}
+
+var WHY_LEAD = {
+  ok: "Lúc này mạng khỏe, không có gì bị trừ điểm.",
+  nodata: "Chưa có số liệu sức khỏe tại thời điểm này.",
+  flows: "Không có sự cố nào đang mở lúc đó. Điểm bị trừ vì các luồng đo bị chậm hoặc mất gói.",
+  incidents: "Điểm bị trừ vì các sự cố đang mở dưới đây."
+};
+
+// Giải thích một thời điểm: câu mở đầu nêu nguyên nhân chính, rồi khoản điểm bị trừ, rồi danh sách sự cố đang mở lúc đó.
+function renderWhy(m) {
+  var box = $("health-why"); clear(box); box.hidden = false;
+  var head = el("div", "whyhead");
+  head.appendChild(el("b", "", "Lúc " + stamp(m.at)));
+  if (m.health) {
+    head.appendChild(el("span", "whyscore " + tone(m.health.grade), String(m.health.score)));
+    head.appendChild(el("span", "muted", m.health.grade));
+  }
+  var close = el("button", "chip", "Đóng"); close.type = "button";
+  close.addEventListener("click", closeWhy);
+  head.appendChild(close);
+  box.appendChild(head);
+
+  var lead = el("p", "whylead" + (m.code === "infra" ? " infra" : ""));
+  if (m.code === "infra") {
+    lead.appendChild(document.createTextNode("Lỗi hạ tầng: " + m.diagnosis.nodes.join(", ") +
+      " mất cổng mạng vật lý. Tự sửa không xử lý được, cần dựng lại lab rồi áp dụng lại cấu hình. "));
+    var a = el("a", "", "Xem cách xử lý →"); a.href = "#incidents"; lead.appendChild(a);
+  } else {
+    lead.appendChild(document.createTextNode(WHY_LEAD[m.code] || ""));
+  }
+  if (m.maintenance) lead.appendChild(document.createTextNode(" Lúc đó đang trong cửa sổ bảo trì."));
+  box.appendChild(lead);
+
+  if (m.penalties.length) {
+    box.appendChild(el("div", "whylab", "Điểm bị trừ"));
+    var ul = el("ul", "whylist");
+    m.penalties.forEach(function (p) {
+      var li = el("li", "");
+      li.appendChild(el("b", "", "−" + p.points + " điểm"));
+      li.appendChild(el("span", "", p.label + " × " + p.each));
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+    if (m.clamped) box.appendChild(el("p", "whynote", "Tổng bị trừ " + m.lost + " điểm nhưng điểm không xuống dưới 0."));
+  }
+
+  var total = m.events.length + m.more;
+  if (total) {
+    box.appendChild(el("div", "whylab", "Sự cố đang mở lúc đó (" + total + ")"));
+    var list = el("div", "");
+    m.events.forEach(function (e) {
+      var row = el("a", "rrow " + (e.severity === "critical" ? "ev-crit" : "ev-warn"));
+      row.href = e.open_now ? "#incidents" : "#incidents/history";     // còn mở: tab Sự cố; đã đóng: Lịch sử
+      row.appendChild(el("i", "rdot"));
+      row.appendChild(el("span", "rtime", stamp(e.opened_at)));
+      row.appendChild(el("span", "rmsg", e.node + ": " + e.message + (e.symptoms ? " (+" + e.symptoms + " triệu chứng)" : "") + (e.infra ? " · lỗi hạ tầng" : "")));
+      row.appendChild(el("span", "rend", e.open_now ? "còn mở" : "đã đóng lúc " + stamp(e.closed_at)));
+      list.appendChild(row);
+    });
+    box.appendChild(list);
+    if (m.more) {
+      var more = el("p", "whynote", "… và " + m.more + " sự cố nữa. ");
+      var go = el("a", "", "Xem lịch sử →"); go.href = "#incidents/history"; more.appendChild(go);
+      box.appendChild(more);
+    }
+  }
 }
 
 // Dòng thời gian: mỗi thiết bị một hàng, mỗi sự cố một thanh (mức độ = màu + chú thích + tooltip).
@@ -2089,6 +2222,7 @@ function refreshCharts() {
   var cards = document.querySelectorAll(".chartcard");
   Array.prototype.forEach.call(cards, function (c) { c.classList.add("loading"); });
   return getJSON("/api/history?range=" + chartRange).then(function (d) {
+    if (chartPick && (msOf(chartPick) < msOf(d.from) || msOf(chartPick) > msOf(d.to))) closeWhy();   // điểm đã trượt ra khỏi khoảng đang xem
     drawHealth(d); drawTimeline(d); drawBuckets(d); drawFlows(d); drawTable(d);
     $("chart-meta").textContent = stamp(d.from) + " – " + stamp(d.to) + " · " + d.incidents.length + " sự cố";
   }).then(function () {
@@ -2103,6 +2237,7 @@ function initCharts() {
   Array.prototype.forEach.call(document.querySelectorAll("#rangebar button"), function (b) {
     b.addEventListener("click", function () {
       chartRange = b.getAttribute("data-range");
+      if (chartPick) closeWhy();
       Array.prototype.forEach.call(document.querySelectorAll("#rangebar button"), function (x) {
         x.className = x === b ? "active" : "";
       });

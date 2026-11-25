@@ -77,6 +77,60 @@ def overview(conn, now: str | None = None) -> dict:
     }
 
 
+MOMENT_MAX_EVENTS = 20
+
+
+def moment(conn, at) -> dict:
+    """Vì sao điểm sức khỏe là như vậy lúc `at`? Chỉ đọc.
+
+    Lấy mẫu sức khỏe gần nhất tại hoặc trước `at`, tính lại các khoản bị trừ (health.penalties) và liệt kê các sự cố
+    ĐANG MỞ lúc đó (mở từ trước hoặc đúng lúc đó, chưa đóng hoặc đóng sau). Triệu chứng gộp vào sự cố gốc như tab Sự cố.
+    "code": nodata | ok | infra | incidents | flows, để giao diện chọn câu mở đầu.
+    """
+    try:
+        when = datetime.fromisoformat(at)
+    except (TypeError, ValueError):
+        raise ValueError("Thời điểm không hợp lệ, cần dạng 2026-01-02T10:00:00+07:00") from None
+    if when.tzinfo is None:
+        raise ValueError("Thời điểm cần có múi giờ, dạng 2026-01-02T10:00:00+07:00")
+    at = when.isoformat(timespec="seconds")
+    old = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute("SELECT at, score, grade, critical, warning, flows_down, flows_degraded, maintenance_id "
+                           "FROM health WHERE at <= ? ORDER BY at DESC LIMIT 1", (at,)).fetchone()
+        if row is None:
+            return {"at": at, "health": None, "penalties": [], "lost": 0, "clamped": False, "events": [],
+                    "more": 0, "diagnosis": None, "maintenance": False, "code": "nodata"}
+        sample = row["at"]
+        open_rows = [dict(r) for r in conn.execute(
+            "SELECT id, node, check_code, kind, severity, message, opened_at, closed_at, root_id FROM incidents "
+            "WHERE opened_at <= ? AND (closed_at IS NULL OR closed_at > ?) ORDER BY id", (sample, sample))]
+    finally:
+        conn.row_factory = old
+    ids = {r["id"] for r in open_rows}
+    kids: dict = {}
+    roots = []
+    for r in open_rows:
+        if r["root_id"] in ids and r["root_id"] != r["id"]:
+            kids[r["root_id"]] = kids.get(r["root_id"], 0) + 1       # triệu chứng của một gốc cũng đang mở
+        else:
+            roots.append(r)                                           # gốc, hoặc triệu chứng mồ côi (gốc đã đóng)
+    roots.sort(key=lambda r: (r["severity"] != "critical", -r["id"]))
+    events = [{"id": r["id"], "node": r["node"], "severity": r["severity"], "kind": r["kind"],
+               "check_code": r["check_code"], "message": r["message"], "opened_at": r["opened_at"],
+               "closed_at": r["closed_at"], "open_now": r["closed_at"] is None, "symptoms": kids.get(r["id"], 0),
+               "infra": diagnosis.is_infra(r["check_code"], r["kind"])} for r in roots]
+    health_row = {k: row[k] for k in row.keys() if k != "maintenance_id"}
+    pens = health.penalties(row)
+    lost = sum(p["points"] for p in pens)
+    dg = diagnosis.diagnose(open_rows)
+    code = "infra" if dg else ("incidents" if events else ("flows" if pens else "ok"))
+    return {"at": sample, "health": health_row, "penalties": pens, "lost": lost, "clamped": lost > 100,
+            "events": events[:MOMENT_MAX_EVENTS], "more": max(0, len(events) - MOMENT_MAX_EVENTS),
+            "diagnosis": dg, "maintenance": row["maintenance_id"] is not None, "code": code}
+
+
 def incident_list(conn, limit=None, only_open: bool = False) -> dict:
     return {"items": incidents.list_incidents(conn, clamp_limit(limit), only_open)}
 

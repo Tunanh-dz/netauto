@@ -69,6 +69,19 @@ def score(findings, probes) -> dict:
             "penalties": [(pts, text) for pts, text in parts if pts]}
 
 
+def penalties(row) -> list[dict]:
+    """Điểm bị trừ vì những gì, tính lại từ một dòng đã lưu (cần critical, warning, flows_down, flows_degraded).
+
+    Dùng đúng các hằng W_* của score() nên hai nơi không thể lệch nhau. Loại nào không có thì bỏ ra khỏi danh sách.
+    """
+    spec = (("critical", W_CRITICAL, "lỗi cấu hình nghiêm trọng"),
+            ("warning", W_WARNING, "cảnh báo"),
+            ("flows_down", W_FLOW_DOWN, "luồng mất kết nối"),
+            ("flows_degraded", W_FLOW_DEGRADED, "luồng chập chờn hoặc chậm"))
+    return [{"kind": kind, "count": row[kind], "each": each, "points": row[kind] * each,
+             "label": f"{row[kind]} {text}"} for kind, each, text in spec if row[kind]]
+
+
 def ensure_schema(conn) -> None:
     conn.executescript(SCHEMA)
     have = {r[1] for r in conn.execute("PRAGMA table_info(health)")}
