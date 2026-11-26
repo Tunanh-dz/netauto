@@ -118,6 +118,11 @@
   .mscard h3 { margin: 0 0 2px; font-size: 15px; }
   .mscard .code { color: var(--muted); font: 12px ui-monospace, Menlo, monospace; margin-bottom: 8px; }
   .mscard .msline { font-size: 14px; }
+  .msfilter { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 8px; }
+  .msfilter button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .msfilter button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .mscard.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .msjump { display: block; margin-top: 8px; border: 0; background: none; padding: 0; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; text-align: left; }
   .msmore { margin-top: 8px; } .msmore summary { cursor: pointer; font-size: 13px; color: var(--accent); }
   .mapline { display: flex; align-items: center; gap: 4px; margin: 0 0 12px; padding: 8px 14px; border-radius: 8px;
               border: 1px solid var(--c); background: var(--cbg); font-weight: 600; color: var(--c); }
@@ -514,7 +519,9 @@
       <p class="muted msnote" id="ms-scope"></p>
     </details>
     <div id="ms-faults" class="msgrid"></div>
-    <details class="tableview"><summary>Xem dạng bảng: các lần đo gần nhất</summary>
+    <details class="tableview" id="ms-tableview"><summary>Xem dạng bảng: các lần đo gần nhất</summary>
+      <div class="msfilter" id="ms-filter" role="group" aria-label="Lọc theo loại lỗi"></div>
+      <div class="muted msnote" id="ms-table-note"></div>
       <div class="tablewrap" id="ms-table"></div>
     </details>
   </div>
@@ -1160,7 +1167,9 @@ function dotStrip(values, median, label) {
   svg.appendChild(svgEl("line", {x1: x(median).toFixed(1), x2: x(median).toFixed(1), y1: Y - 12, y2: Y + 12, "class": "med"}));
   svg.appendChild(svgEl("text", {x: L, y: 46}, "0 giây"));
   svg.appendChild(svgEl("text", {x: R, y: 46, "text-anchor": "end"}, top + " giây"));
-  svg.appendChild(svgEl("text", {x: Math.min(R - 60, Math.max(L, x(median) - 30)).toFixed(1), y: 9}, "trung vị " + num(median) + " giây"));
+  var mx = x(median), right = mx > (L + R) / 2;        // trung vị nằm bên phải: chữ căn lề phải để không bị cắt mép
+  svg.appendChild(svgEl("text", right ? {x: Math.min(R, mx + 30).toFixed(1), y: 9, "text-anchor": "end"}
+                                      : {x: Math.max(L, mx - 30).toFixed(1), y: 9}, "trung vị " + num(median) + " giây"));
   return svg;
 }
 function strip(caption, values, median) {
@@ -1170,8 +1179,55 @@ function strip(caption, values, median) {
   box.appendChild(dotStrip(values, median, caption));
   return box;
 }
+var msOpen = {};                                      // thẻ lỗi nào đang mở "Xem từng lần đo": nhớ qua lần dựng lại
+var msLast = "";                                      // câu trả lời lần trước, giống thì không dựng lại trang
+var msState = {fault: "all", data: null};            // loại lỗi đang xem trong bảng; nhớ qua lần tự làm mới 5 giây
+var STATUS_VN = {detected: "Đã phát hiện", missed: "Bỏ sót", invalid: "Không hợp lệ", running: "Đang chạy"};
+var MODE_VN = {detect: "Chỉ đo phát hiện", remediate: "Đo cả tự sửa"};
+function markSelectedCard() {
+  Array.prototype.forEach.call($("ms-faults").children, function (c) {
+    c.classList.toggle("sel", msState.fault !== "all" && c.getAttribute("data-fault") === msState.fault);
+  });
+}
+function showFaultRuns(fault, scroll) {
+  msState.fault = fault;
+  renderMeasureTable(); markSelectedCard();
+  var view = $("ms-tableview"); view.open = true;
+  if (scroll) view.scrollIntoView({block: "start", behavior: "smooth"});
+}
+function renderMeasureTable() {
+  var d = msState.data; if (!d) return;
+  var names = [], count = {}, label = {};
+  d.items.forEach(function (r) { if (!count[r.fault]) { count[r.fault] = 0; names.push(r.fault); } count[r.fault]++; });
+  names.sort();
+  if (msState.fault !== "all" && !count[msState.fault]) msState.fault = "all";
+  d.per_fault.forEach(function (p) { label[p.fault] = p.description || p.fault; });
+  var bar = $("ms-filter"); clear(bar);
+  [["all", "Tất cả (" + d.items.length + ")"]].concat(names.map(function (n) { return [n, (label[n] || n) + " (" + count[n] + ")"]; }))
+    .forEach(function (x) {
+      var b = el("button", "", x[1]); b.type = "button";
+      b.setAttribute("aria-pressed", String(msState.fault === x[0]));
+      b.addEventListener("click", function () { showFaultRuns(x[0], false); });
+      bar.appendChild(b);
+    });
+  var rows = d.items.filter(function (r) { return msState.fault === "all" || r.fault === msState.fault; });
+  $("ms-table-note").textContent = (msState.fault === "all"
+      ? "Đang hiện " + rows.length + " lần đo gần nhất của cả " + names.length + " loại lỗi trộn lẫn. Bấm một loại lỗi ở trên để chỉ xem loại đó."
+      : "Đang hiện " + rows.length + " lần đo của: " + (label[msState.fault] || msState.fault) + ".") +
+    (d.items.length >= 200 ? " Bảng chỉ lấy 200 lần đo gần nhất; các thẻ phía trên tính trên tất cả các lần đo." : "");
+  table($("ms-table"),
+    ["#", "Lỗi", "Gây lúc", "Kết quả", "Thấy lỗi sau", "Cảnh báo sau", "Sửa xong sau", "Chế độ"],
+    rows.map(function (r) {
+      return [{text: r.id}, {text: r.fault}, {text: stamp(r.injected_at)}, {text: STATUS_VN[r.status] || r.status},
+              {text: num(r.observed_seconds) + " giây"}, {text: num(r.seconds) + " giây"},
+              {text: r.fix_seconds === null || r.fix_seconds === undefined ? "-" : num(r.fix_seconds) + " giây"},
+              {text: MODE_VN[r.mode] || r.mode}];
+    }),
+    "Chưa có lần đo nào.");
+}
 function faultCard(p) {
   var card = el("div", "mscard");
+  card.setAttribute("data-fault", p.fault);
   card.appendChild(el("h3", "", p.description || "Lỗi không còn trong danh mục"));
   card.appendChild(el("div", "code", p.fault + " · " + p.node));
   var row = el("div", "msrow");
@@ -1182,10 +1238,16 @@ function faultCard(p) {
   card.appendChild(row);
   card.appendChild(el("div", "msline", "Phát hiện lỗi sau " + num(p.alert_median) + " giây (trung vị)"));
   if (p.fix_values.length) card.appendChild(el("div", "msline", "Tự sửa xong sau " + num(p.fix_median) + " giây (trung vị)"));
-  var more = el("details", "msmore");
-  more.appendChild(el("summary", "", "Xem từng lần đo"));
+  var more = el("details", "msmore"), sum = el("summary", "", "Xem từng lần đo");
+  more.appendChild(sum);
   more.appendChild(strip("Phát hiện lỗi sau", p.alert_values, p.alert_median));
   if (p.fix_values.length) more.appendChild(strip("Tự sửa xong sau", p.fix_values, p.fix_median));
+  var go = el("button", "msjump", "Bảng số liệu của lỗi này ↓"); go.type = "button";
+  go.addEventListener("click", function () { showFaultRuns(p.fault, true); });
+  more.appendChild(go);
+  more.open = !!msOpen[p.fault];
+  more.addEventListener("toggle", function () { msOpen[p.fault] = more.open; });
+  sum.addEventListener("click", function () { if (!more.open) showFaultRuns(p.fault, false); });   // mở thẻ nào thì bảng bên dưới lọc theo lỗi đó
   card.appendChild(more);
   return card;
 }
@@ -1207,18 +1269,15 @@ function renderMeasure(d) {
   var g = $("ms-faults"); clear(g);
   if (!d.per_fault.length) g.appendChild(el("div", "muted", "Chưa có lần đo nào. Dùng: python3 -m netauto.injector --all --yes"));
   d.per_fault.forEach(function (p) { g.appendChild(faultCard(p)); });
-  table($("ms-table"),
-    ["#", "Lỗi", "Gây lúc", "Kết quả", "Thấy lỗi sau", "Cảnh báo sau", "Sửa xong sau", "Chế độ"],
-    d.items.map(function (r) {
-      return [{text: r.id}, {text: r.fault}, {text: stamp(r.injected_at)}, {text: r.status},
-              {text: num(r.observed_seconds) + " giây"}, {text: num(r.seconds) + " giây"},
-              {text: r.fix_seconds === null || r.fix_seconds === undefined ? "-" : num(r.fix_seconds) + " giây"},
-              {text: r.mode}];
-    }),
-    "Chưa có lần đo nào.");
+  msState.data = d;
+  renderMeasureTable(); markSelectedCard();
 }
 function refreshMeasure() {
-  return getJSON("/api/injections?limit=50").then(renderMeasure);
+  return getJSON("/api/injections?limit=200").then(function (d) {
+    var now = JSON.stringify(d);
+    if (now === msLast) return;                       // không có gì mới: giữ nguyên trang, không làm đóng các phần người dùng đang mở
+    msLast = now; renderMeasure(d);
+  });
 }
 
 var ACTOR_NAME = {auto: "Máy tự sửa", web: "Giao diện web", manual: "Dòng lệnh"};
